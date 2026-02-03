@@ -34,6 +34,12 @@ class OutboxFlowTest extends TestCase
             'type' => 'series.uploaded',
             'payload' => ['series_id' => 1],
         ]);
+        $event->update([
+            'payload' => [
+                'series_id' => 1,
+                'assert_event_key' => "series.uploaded:{$event->id}",
+            ],
+        ]);
 
         (new DispatchOutboxEvent($event->id))->handle();
         $event->refresh();
@@ -67,6 +73,8 @@ class OutboxFlowTest extends TestCase
 
     public function test_dispatch_outbox_event_marks_event_failed_after_max_attempts(): void
     {
+        config()->set('outbox.retry.max_attempts', 5);
+
         $event = OutboxEvent::query()->create([
             'type' => 'series.uploaded',
             'payload' => [
@@ -74,15 +82,36 @@ class OutboxFlowTest extends TestCase
                 'simulate_fail' => true,
                 'simulate_fail_message' => 'still down',
             ],
-            'attempts' => DispatchOutboxEvent::MAX_ATTEMPTS - 1,
+            'attempts' => 4,
         ]);
 
         (new DispatchOutboxEvent($event->id))->handle();
         $event->refresh();
 
         $this->assertSame('failed', $event->status);
-        $this->assertSame(DispatchOutboxEvent::MAX_ATTEMPTS, $event->attempts);
+        $this->assertSame(5, $event->attempts);
         $this->assertSame('still down', $event->last_error);
         $this->assertNull($event->available_at);
+    }
+
+    public function test_dispatch_outbox_event_uses_configurable_retry_limit(): void
+    {
+        config()->set('outbox.retry.max_attempts', 2);
+
+        $event = OutboxEvent::query()->create([
+            'type' => 'series.uploaded',
+            'payload' => [
+                'series_id' => 1,
+                'simulate_fail' => true,
+                'simulate_fail_message' => 'temporary error',
+            ],
+            'attempts' => 1,
+        ]);
+
+        (new DispatchOutboxEvent($event->id))->handle();
+        $event->refresh();
+
+        $this->assertSame('failed', $event->status);
+        $this->assertSame(2, $event->attempts);
     }
 }

@@ -16,14 +16,13 @@ class DispatchOutboxEvent implements ShouldQueue
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
 
-    public const MAX_ATTEMPTS = 5;
-    public const BASE_BACKOFF_SECONDS = 60;
-    public const MAX_BACKOFF_SECONDS = 3600;
-
     public function __construct(public int $outboxEventId) {}
 
     public function handle(): void
     {
+        // We fetch + lock one outbox row in a transaction to ensure:
+        // 1) only one worker updates this row at a time;
+        // 2) state transitions remain consistent (pending -> processing -> done/failed).
         $dispatchContext = DB::transaction(function () {
             /** @var OutboxEvent $event */
             $event = OutboxEvent::query()
@@ -31,10 +30,12 @@ class DispatchOutboxEvent implements ShouldQueue
                 ->findOrFail($this->outboxEventId);
 
             if (in_array($event->status, ['done', 'failed'], true)) {
-                return null; // идемпотентность
+                // Idempotency guard: once terminal state is reached,
+                // repeated job execution must do nothing.
+                return null;
             }
 
-            if ($event->attempts >= self::MAX_ATTEMPTS) {
+            if ($event->attempts >= $this->maxAttempts()) {
                 $event->update([
                     'status' => 'failed',
                     'available_at' => null,
@@ -52,6 +53,8 @@ class DispatchOutboxEvent implements ShouldQueue
             ]);
 
             return [
+                'event_id' => $event->id,
+                'event_key' => $event->integrationEventKey(),
                 'type' => $event->type,
                 'payload' => (array) $event->payload,
                 'attempt' => $attempt,
@@ -64,6 +67,8 @@ class DispatchOutboxEvent implements ShouldQueue
 
         try {
             $this->dispatchToIntegration(
+                $dispatchContext['event_id'],
+                $dispatchContext['event_key'],
                 $dispatchContext['type'],
                 $dispatchContext['payload'],
             );
@@ -71,11 +76,11 @@ class DispatchOutboxEvent implements ShouldQueue
             OutboxEvent::query()
                 ->whereKey($this->outboxEventId)
                 ->update([
-                'status' => 'done',
-                'processed_at' => now(),
-                'available_at' => null,
-                'last_error' => null,
-            ]);
+                    'status' => 'done',
+                    'processed_at' => now(),
+                    'available_at' => null,
+                    'last_error' => null,
+                ]);
         } catch (Throwable $e) {
             $this->markRetryOrFailed($dispatchContext['attempt'], $e->getMessage());
         }
@@ -93,18 +98,41 @@ class DispatchOutboxEvent implements ShouldQueue
         $this->markRetryOrFailed($attempt, $e->getMessage());
     }
 
-    private function dispatchToIntegration(string $type, array $payload): void
-    {
+    private function dispatchToIntegration(
+        int $eventId,
+        string $eventKey,
+        string $type,
+        array $payload
+    ): void {
+        // This method is the future integration boundary.
+        // When real webhook/AI adapters are added, we will call them here
+        // and always pass event_id + event_key for idempotency on receiver side.
+        //
+        // event_id  - local immutable integer identifier.
+        // event_key - stable external idempotency key (type + id).
+        //             Consumers can safely deduplicate by this key.
+
+        // Optional assertion hook for tests:
+        // proves that event_key is calculated and forwarded correctly.
+        if (isset($payload['assert_event_key']) && $payload['assert_event_key'] !== $eventKey) {
+            throw new RuntimeException('Unexpected event key passed to integration.');
+        }
+
         // Temporary simulation hook for tests/dev until real integrations are added.
         if (($payload['simulate_fail'] ?? false) === true) {
             $message = $payload['simulate_fail_message'] ?? 'Simulated integration failure.';
             throw new RuntimeException($message);
         }
+
+        // Mark arguments as intentionally consumed to keep static analyzers happy
+        // until a real integration implementation is introduced.
+        $unused = [$eventId, $eventKey, $type];
+        unset($unused);
     }
 
     private function markRetryOrFailed(int $attempt, string $errorMessage): void
     {
-        $status = $attempt >= self::MAX_ATTEMPTS ? 'failed' : 'pending';
+        $status = $attempt >= $this->maxAttempts() ? 'failed' : 'pending';
         $availableAt = $status === 'pending'
             ? now()->addSeconds($this->calculateBackoffSeconds($attempt))
             : null;
@@ -121,8 +149,28 @@ class DispatchOutboxEvent implements ShouldQueue
 
     private function calculateBackoffSeconds(int $attempt): int
     {
-        $seconds = self::BASE_BACKOFF_SECONDS * (2 ** max(0, $attempt - 1));
+        // Exponential backoff:
+        // attempt=1 => base
+        // attempt=2 => base*2
+        // attempt=3 => base*4
+        // ...
+        $seconds = $this->baseBackoffSeconds() * (2 ** max(0, $attempt - 1));
 
-        return min($seconds, self::MAX_BACKOFF_SECONDS);
+        return min($seconds, $this->maxBackoffSeconds());
+    }
+
+    private function maxAttempts(): int
+    {
+        return max(1, (int) config('outbox.retry.max_attempts', 5));
+    }
+
+    private function baseBackoffSeconds(): int
+    {
+        return max(1, (int) config('outbox.retry.base_backoff_seconds', 60));
+    }
+
+    private function maxBackoffSeconds(): int
+    {
+        return max(1, (int) config('outbox.retry.max_backoff_seconds', 3600));
     }
 }
