@@ -1,8 +1,67 @@
 # Photo Journal API Contract
 
 Base URL: `/api/v1`  
-Authentication: currently disabled (no auth required yet).  
+Authentication: Bearer token via Laravel Sanctum.  
 Response format: JSON.
+
+## Authentication
+
+### `POST /auth/register`
+
+Fields:
+- `name` (required, string, max 255)
+- `email` (required, email, unique)
+- `password` (required, string, min 8)
+
+Response `201`:
+
+```json
+{
+  "token": "1|plainTextToken",
+  "user": {
+    "id": 1,
+    "name": "Alice",
+    "email": "alice@example.com"
+  }
+}
+```
+
+### `POST /auth/login`
+
+Fields:
+- `email` (required, email)
+- `password` (required, string)
+
+Response `200`:
+
+```json
+{
+  "token": "2|plainTextToken",
+  "user": {
+    "id": 1,
+    "name": "Alice",
+    "email": "alice@example.com"
+  }
+}
+```
+
+Invalid credentials return `422`.
+
+### `GET /auth/me`
+
+Requires Bearer token.
+
+### `POST /auth/logout`
+
+Requires Bearer token. Deletes current access token and returns `204`.
+
+## Bearer usage
+
+Protected routes require:
+
+```http
+Authorization: Bearer <token>
+```
 
 ## Error format
 

@@ -6,24 +6,38 @@ use App\Jobs\ProcessSeries;
 use App\Models\Photo;
 use App\Models\Series;
 use App\Models\Tag;
+use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Queue;
+use Laravel\Sanctum\Sanctum;
 use Tests\TestCase;
 
 class SeriesApiTest extends TestCase
 {
     use RefreshDatabase;
 
+    private User $user;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        $this->user = User::factory()->create();
+        Sanctum::actingAs($this->user);
+    }
+
     public function test_index_returns_paginated_series_with_photos_count(): void
     {
         $first = Series::query()->create([
+            'user_id' => $this->user->id,
             'title' => 'First',
             'description' => 'Old one',
         ]);
 
         $second = Series::query()->create([
+            'user_id' => $this->user->id,
             'title' => 'Second',
             'description' => 'New one',
         ]);
@@ -138,6 +152,7 @@ class SeriesApiTest extends TestCase
     public function test_show_returns_series_with_photos_tags_and_count(): void
     {
         $series = Series::query()->create([
+            'user_id' => $this->user->id,
             'title' => 'Mountains',
             'description' => 'Trip album',
         ]);
@@ -167,6 +182,7 @@ class SeriesApiTest extends TestCase
     public function test_update_changes_title_and_description(): void
     {
         $series = Series::query()->create([
+            'user_id' => $this->user->id,
             'title' => 'Before',
             'description' => 'Before desc',
         ]);
@@ -191,6 +207,7 @@ class SeriesApiTest extends TestCase
     public function test_destroy_deletes_series_and_returns_no_content(): void
     {
         $series = Series::query()->create([
+            'user_id' => $this->user->id,
             'title' => 'To delete',
             'description' => 'Will be removed',
         ]);
@@ -209,6 +226,7 @@ class SeriesApiTest extends TestCase
         Storage::fake('local');
 
         $series = Series::query()->create([
+            'user_id' => $this->user->id,
             'title' => 'To delete with files',
             'description' => 'Cleanup test',
         ]);
@@ -225,6 +243,20 @@ class SeriesApiTest extends TestCase
 
         $response->assertNoContent();
         Storage::disk('local')->assertMissing($photo->path);
+    }
+
+    public function test_user_cannot_view_foreign_series(): void
+    {
+        $foreignUser = User::factory()->create();
+        $foreignSeries = Series::query()->create([
+            'user_id' => $foreignUser->id,
+            'title' => 'Foreign',
+            'description' => 'Foreign',
+        ]);
+
+        $response = $this->getJson("/api/v1/series/{$foreignSeries->id}");
+
+        $response->assertForbidden();
     }
 
     private function fakeImage(string $name): UploadedFile

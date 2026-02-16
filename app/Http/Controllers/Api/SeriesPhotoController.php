@@ -21,6 +21,8 @@ class SeriesPhotoController extends Controller
 
     public function index(ListSeriesPhotosRequest $request, Series $series): JsonResponse
     {
+        $this->authorize('view', $series);
+
         $validated = $request->validated();
 
         $perPage = $validated['per_page'] ?? 15;
@@ -41,6 +43,8 @@ class SeriesPhotoController extends Controller
 
     public function store(StoreSeriesPhotosRequest $request, Series $series): JsonResponse
     {
+        $this->authorize('update', $series);
+
         $disk = config('filesystems.default');
         $files = $request->file('photos', []);
         $uploadResult = $this->photoBatchUploader->uploadToSeries($series, $files, $disk);
@@ -63,6 +67,7 @@ class SeriesPhotoController extends Controller
     public function show(Series $series, Photo $photo): JsonResponse
     {
         $this->ensureSeriesPhoto($series, $photo);
+        $this->authorize('view', $photo);
 
         $photo->load('tags');
 
@@ -74,6 +79,7 @@ class SeriesPhotoController extends Controller
     public function update(UpdateSeriesPhotoRequest $request, Series $series, Photo $photo): JsonResponse
     {
         $this->ensureSeriesPhoto($series, $photo);
+        $this->authorize('update', $photo);
 
         $photo->update($request->validated());
 
@@ -85,6 +91,7 @@ class SeriesPhotoController extends Controller
     public function destroy(Series $series, Photo $photo): JsonResponse
     {
         $this->ensureSeriesPhoto($series, $photo);
+        $this->authorize('delete', $photo);
 
         $disk = config('filesystems.default');
         Storage::disk($disk)->delete($photo->path);
@@ -97,6 +104,7 @@ class SeriesPhotoController extends Controller
     public function syncTags(SyncPhotoTagsRequest $request, Series $series, Photo $photo): JsonResponse
     {
         $this->ensureSeriesPhoto($series, $photo);
+        $this->authorize('update', $photo);
 
         $names = $this->normalizeTagNames($request->validated()['tags']);
 
@@ -115,6 +123,7 @@ class SeriesPhotoController extends Controller
     public function attachTags(SyncPhotoTagsRequest $request, Series $series, Photo $photo): JsonResponse
     {
         $this->ensureSeriesPhoto($series, $photo);
+        $this->authorize('update', $photo);
 
         $names = $this->normalizeTagNames($request->validated()['tags']);
 
@@ -133,6 +142,7 @@ class SeriesPhotoController extends Controller
     public function detachTag(Series $series, Photo $photo, Tag $tag): JsonResponse
     {
         $this->ensureSeriesPhoto($series, $photo);
+        $this->authorize('update', $photo);
 
         $photo->tags()->detach($tag->id);
         $photo->load('tags');

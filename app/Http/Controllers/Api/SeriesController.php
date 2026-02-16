@@ -17,6 +17,8 @@ class SeriesController extends Controller
 
     public function index(Request $request): JsonResponse
     {
+        $this->authorize('viewAny', Series::class);
+
         $validated = $request->validate([
             'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
             'page' => ['nullable', 'integer', 'min:1'],
@@ -25,6 +27,7 @@ class SeriesController extends Controller
         $perPage = $validated['per_page'] ?? 15;
 
         $series = Series::query()
+            ->where('user_id', $request->user()->id)
             ->withCount('photos')
             ->latest()
             ->paginate($perPage)
@@ -35,11 +38,14 @@ class SeriesController extends Controller
 
     public function store(StoreSeriesWithPhotosRequest $request): JsonResponse
     {
+        $this->authorize('create', Series::class);
+
         $data = $request->validated();
 
         $disk = config('filesystems.default');
         $files = $request->file('photos', []);
         $series = Series::create([
+            'user_id' => $request->user()->id,
             'title' => $data['title'],
             'description' => $data['description'] ?? null,
         ]);
@@ -69,6 +75,8 @@ class SeriesController extends Controller
 
     public function show(Request $request, Series $series): JsonResponse
     {
+        $this->authorize('view', $series);
+
         $validated = $request->validate([
             'include_photos' => ['nullable', 'boolean'],
             'photos_limit' => ['nullable', 'integer', 'min:1', 'max:100'],
@@ -94,6 +102,8 @@ class SeriesController extends Controller
 
     public function update(Request $request, Series $series): JsonResponse
     {
+        $this->authorize('update', $series);
+
         $data = $request->validate([
             'title' => ['sometimes', 'required', 'string', 'max:255'],
             'description' => ['sometimes', 'nullable', 'string'],
@@ -108,6 +118,8 @@ class SeriesController extends Controller
 
     public function destroy(Series $series): JsonResponse
     {
+        $this->authorize('delete', $series);
+
         $disk = config('filesystems.default');
         $photoPaths = $series->photos()
             ->pluck('path')

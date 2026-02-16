@@ -4,14 +4,26 @@ namespace Tests\Feature;
 
 use App\Models\Series;
 use App\Models\Tag;
+use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Storage;
+use Laravel\Sanctum\Sanctum;
 use Tests\TestCase;
 
 class SeriesPhotoUploadTest extends TestCase
 {
     use RefreshDatabase;
+
+    private User $user;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        $this->user = User::factory()->create();
+        Sanctum::actingAs($this->user);
+    }
 
     public function test_upload_photos_creates_records_and_stores_files(): void
     {
@@ -19,6 +31,7 @@ class SeriesPhotoUploadTest extends TestCase
         Storage::fake('local');
 
         $series = Series::query()->create([
+            'user_id' => $this->user->id,
             'title' => 'Coast trip',
             'description' => 'Beach day',
         ]);
@@ -58,11 +71,13 @@ class SeriesPhotoUploadTest extends TestCase
     public function test_index_returns_only_photos_for_series(): void
     {
         $series = Series::query()->create([
+            'user_id' => $this->user->id,
             'title' => 'Urban',
             'description' => 'Streets',
         ]);
 
         $other = Series::query()->create([
+            'user_id' => $this->user->id,
             'title' => 'Nature',
             'description' => 'Forest',
         ]);
@@ -96,6 +111,7 @@ class SeriesPhotoUploadTest extends TestCase
     public function test_index_supports_pagination_and_sorting(): void
     {
         $series = Series::query()->create([
+            'user_id' => $this->user->id,
             'title' => 'Paginated',
             'description' => 'Sorted',
         ]);
@@ -130,6 +146,7 @@ class SeriesPhotoUploadTest extends TestCase
     public function test_show_returns_photo_for_series(): void
     {
         $series = Series::query()->create([
+            'user_id' => $this->user->id,
             'title' => 'Portraits',
             'description' => 'Studio',
         ]);
@@ -149,6 +166,7 @@ class SeriesPhotoUploadTest extends TestCase
     public function test_update_changes_original_name(): void
     {
         $series = Series::query()->create([
+            'user_id' => $this->user->id,
             'title' => 'Macro',
             'description' => 'Details',
         ]);
@@ -176,6 +194,7 @@ class SeriesPhotoUploadTest extends TestCase
         Storage::fake('local');
 
         $series = Series::query()->create([
+            'user_id' => $this->user->id,
             'title' => 'Delete',
             'description' => 'To remove',
         ]);
@@ -199,11 +218,13 @@ class SeriesPhotoUploadTest extends TestCase
     public function test_photo_must_belong_to_series(): void
     {
         $series = Series::query()->create([
+            'user_id' => $this->user->id,
             'title' => 'Main',
             'description' => 'Main',
         ]);
 
         $other = Series::query()->create([
+            'user_id' => $this->user->id,
             'title' => 'Other',
             'description' => 'Other',
         ]);
@@ -221,6 +242,7 @@ class SeriesPhotoUploadTest extends TestCase
     public function test_sync_tags_creates_and_attaches_tags(): void
     {
         $series = Series::query()->create([
+            'user_id' => $this->user->id,
             'title' => 'Tagged',
             'description' => 'Tagged',
         ]);
@@ -256,6 +278,7 @@ class SeriesPhotoUploadTest extends TestCase
     public function test_attach_tags_does_not_detach_existing(): void
     {
         $series = Series::query()->create([
+            'user_id' => $this->user->id,
             'title' => 'Attach',
             'description' => 'Attach',
         ]);
@@ -291,6 +314,7 @@ class SeriesPhotoUploadTest extends TestCase
     public function test_detach_removes_single_tag(): void
     {
         $series = Series::query()->create([
+            'user_id' => $this->user->id,
             'title' => 'Detach',
             'description' => 'Detach',
         ]);

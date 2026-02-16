@@ -8,6 +8,11 @@ class Series extends Model
 {
     protected $fillable = ['user_id', 'title', 'description'];
 
+    public function user()
+    {
+        return $this->belongsTo(User::class);
+    }
+
     public function photos()
     {
         return $this->hasMany(Photo::class);
