@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\Api\AuthController;
+use App\Http\Controllers\Api\ProfileController;
 use App\Http\Controllers\Api\SeriesController;
 use App\Http\Controllers\Api\SeriesPhotoController;
 use App\Http\Controllers\Api\TagController;
@@ -12,7 +13,8 @@ Route::prefix('v1')->group(function () {
 
     Route::middleware('auth:sanctum')->group(function () {
         Route::post('auth/logout', [AuthController::class, 'logout']);
-        Route::get('auth/me', [AuthController::class, 'me']);
+        Route::get('profile', [ProfileController::class, 'show']);
+        Route::patch('profile', [ProfileController::class, 'update']);
 
         Route::apiResource('series', SeriesController::class)
             ->only(['index', 'store', 'show', 'update', 'destroy']);

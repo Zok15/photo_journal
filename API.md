@@ -59,7 +59,7 @@ Response `200`:
 
 Invalid credentials return `422`.
 
-### `GET /auth/me`
+### `GET /profile`
 
 Requires Bearer token.
 
@@ -79,6 +79,17 @@ Response `200`:
 
 Requires Bearer token. Deletes current access token and returns `204`.
 
+### `PATCH /profile`
+
+Requires Bearer token.
+
+Fields:
+- `name` (optional, string, max 255)
+- `journal_title` (optional, nullable string, max 255)
+- `email` (optional, email, max 255, unique)
+
+Response `200`: updated current user in `data`.
+
 ## Bearer usage
 
 Protected routes require:
@@ -91,7 +102,7 @@ Authorization: Bearer <token>
 
 1. Call `POST /auth/login` (or `POST /auth/register`).
 2. Save `token` on frontend and attach header `Authorization: Bearer <token>` to all protected requests.
-3. On app start, call `GET /auth/me` to restore authenticated user state.
+3. On app start, call `GET /profile` to restore authenticated user state.
 4. On `401`, clear token and redirect to login.
 5. On explicit logout, call `POST /auth/logout`, then clear token on frontend.
 

@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Laravel\Sanctum\PersonalAccessToken;
+use Laravel\Sanctum\Sanctum;
 use Tests\TestCase;
 
 class AuthApiTest extends TestCase
@@ -42,9 +43,9 @@ class AuthApiTest extends TestCase
         $response->assertJsonStructure(['token', 'user' => ['id', 'name', 'email']]);
     }
 
-    public function test_me_requires_valid_token(): void
+    public function test_profile_requires_valid_token(): void
     {
-        $response = $this->getJson('/api/v1/auth/me');
+        $response = $this->getJson('/api/v1/profile');
 
         $response->assertUnauthorized();
     }
@@ -70,5 +71,50 @@ class AuthApiTest extends TestCase
             ->exists();
 
         $this->assertFalse($tokenStillExists);
+    }
+
+    public function test_update_me_updates_name_and_journal_title(): void
+    {
+        $user = User::factory()->create([
+            'name' => 'Before',
+            'journal_title' => null,
+        ]);
+
+        Sanctum::actingAs($user);
+
+        $response = $this->patchJson('/api/v1/profile', [
+            'name' => 'After',
+            'journal_title' => 'Bird Notes',
+        ]);
+
+        $response->assertOk();
+        $response->assertJsonPath('data.name', 'After');
+        $response->assertJsonPath('data.journal_title', 'Bird Notes');
+
+        $this->assertDatabaseHas('users', [
+            'id' => $user->id,
+            'name' => 'After',
+            'journal_title' => 'Bird Notes',
+        ]);
+    }
+
+    public function test_update_me_rejects_taken_email(): void
+    {
+        $current = User::factory()->create([
+            'email' => 'current@example.com',
+        ]);
+
+        User::factory()->create([
+            'email' => 'taken@example.com',
+        ]);
+
+        Sanctum::actingAs($current);
+
+        $response = $this->patchJson('/api/v1/profile', [
+            'email' => 'taken@example.com',
+        ]);
+
+        $response->assertUnprocessable();
+        $response->assertJsonValidationErrors(['email']);
     }
 }
