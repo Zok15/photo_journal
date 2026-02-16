@@ -1,8 +1,14 @@
-# Photo Journal API Contract
+# Photo Journal API Contract (v1)
 
 Base URL: `/api/v1`  
 Authentication: Bearer token via Laravel Sanctum.  
 Response format: JSON.
+
+## Contract status
+
+- Version: `v1`
+- Status: frozen for frontend integration
+- Rule: response payloads and field names in this document must not change without explicit version bump or coordinated frontend update.
 
 ## Authentication
 
@@ -51,6 +57,18 @@ Invalid credentials return `422`.
 
 Requires Bearer token.
 
+Response `200`:
+
+```json
+{
+  "data": {
+    "id": 1,
+    "name": "Alice",
+    "email": "alice@example.com"
+  }
+}
+```
+
 ### `POST /auth/logout`
 
 Requires Bearer token. Deletes current access token and returns `204`.
@@ -62,6 +80,19 @@ Protected routes require:
 ```http
 Authorization: Bearer <token>
 ```
+
+## SPA auth flow (recommended)
+
+1. Call `POST /auth/login` (or `POST /auth/register`).
+2. Save `token` on frontend and attach header `Authorization: Bearer <token>` to all protected requests.
+3. On app start, call `GET /auth/me` to restore authenticated user state.
+4. On `401`, clear token and redirect to login.
+5. On explicit logout, call `POST /auth/logout`, then clear token on frontend.
+
+Token storage recommendation:
+- Prefer in-memory storage for active session.
+- Optionally mirror token in `localStorage` for session restore after refresh.
+- Never log tokens to console or analytics.
 
 ## Error format
 
@@ -85,6 +116,31 @@ Upload partial errors (series/photos upload endpoints) use:
   "message": "Photo could not be saved."
 }
 ```
+
+Auth/access errors:
+
+```json
+{
+  "message": "Unauthenticated."
+}
+```
+
+```json
+{
+  "message": "This action is unauthorized."
+}
+```
+
+Status codes:
+- `401` unauthenticated (missing/invalid token)
+- `403` authenticated but forbidden by policy/ownership
+- `422` validation error
+
+## Access rules
+
+- All routes except `POST /auth/register` and `POST /auth/login` require Bearer token.
+- `Series` and nested `Photo` operations are restricted to owner (`series.user_id`).
+- `Tag` manual create/update requires authenticated user.
 
 ## Series
 
