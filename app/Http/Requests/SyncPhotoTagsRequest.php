@@ -15,7 +15,7 @@ class SyncPhotoTagsRequest extends FormRequest
     {
         return [
             'tags' => ['required', 'array', 'min:1', 'max:50'],
-            'tags.*' => ['required', 'string', 'max:50'],
+            'tags.*' => ['required', 'string', 'max:50', 'regex:/^[A-Za-z ]+$/'],
         ];
     }
 }

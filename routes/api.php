@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\Api\SeriesController;
 use App\Http\Controllers\Api\SeriesPhotoController;
+use App\Http\Controllers\Api\TagController;
 use Illuminate\Support\Facades\Route;
 
 Route::prefix('v1')->group(function () {
@@ -16,4 +17,7 @@ Route::prefix('v1')->group(function () {
     Route::put('series/{series}/photos/{photo}/tags', [SeriesPhotoController::class, 'syncTags']);
     Route::post('series/{series}/photos/{photo}/tags', [SeriesPhotoController::class, 'attachTags']);
     Route::delete('series/{series}/photos/{photo}/tags/{tag}', [SeriesPhotoController::class, 'detachTag']);
+
+    Route::post('tags', [TagController::class, 'store']);
+    Route::patch('tags/{tag}', [TagController::class, 'update']);
 });
