@@ -14,6 +14,7 @@ use App\Services\PhotoBatchUploader;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
 
 class SeriesPhotoController extends Controller
 {
@@ -81,7 +82,13 @@ class SeriesPhotoController extends Controller
         $this->ensureSeriesPhoto($series, $photo);
         $this->authorize('update', $photo);
 
-        $photo->update($request->validated());
+        $data = $request->validated();
+
+        if (array_key_exists('original_name', $data)) {
+            $data['original_name'] = $this->normalizeOriginalName($photo, $data['original_name']);
+        }
+
+        $photo->update($data);
 
         return response()->json([
             'data' => $photo->fresh()->load('tags'),
@@ -203,5 +210,48 @@ class SeriesPhotoController extends Controller
         $sqlState = $e->errorInfo[0] ?? null;
 
         return $sqlState === '23000';
+    }
+
+    private function normalizeOriginalName(Photo $photo, string $input): string
+    {
+        $rawName = trim(pathinfo($input, PATHINFO_FILENAME));
+        $baseName = $this->normalizeBaseName($rawName);
+        $extension = $this->resolveLockedExtension($photo);
+
+        $maxBaseLength = max(1, 255 - strlen($extension) - 1);
+        if (strlen($baseName) > $maxBaseLength) {
+            $baseName = substr($baseName, 0, $maxBaseLength);
+        }
+
+        return "{$baseName}.{$extension}";
+    }
+
+    private function normalizeBaseName(string $rawName): string
+    {
+        if ($rawName === '') {
+            return 'file';
+        }
+
+        if (preg_match('/^[A-Za-z0-9]+$/', $rawName) === 1) {
+            return $rawName;
+        }
+
+        $ascii = Str::ascii($rawName);
+        $words = preg_replace('/[^A-Za-z0-9]+/', ' ', $ascii) ?? '';
+        $camel = Str::camel(trim($words));
+
+        return $camel !== '' ? $camel : 'file';
+    }
+
+    private function resolveLockedExtension(Photo $photo): string
+    {
+        $fromOriginal = strtolower(pathinfo((string) $photo->original_name, PATHINFO_EXTENSION));
+        if ($fromOriginal !== '') {
+            return $fromOriginal;
+        }
+
+        $fromPath = strtolower(pathinfo((string) $photo->path, PATHINFO_EXTENSION));
+
+        return $fromPath !== '' ? $fromPath : 'jpg';
     }
 }

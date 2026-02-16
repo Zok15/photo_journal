@@ -279,6 +279,8 @@ Response: `data` with photo + `tags`.
 
 Fields:
 - `original_name` (optional, string, max 255)
+  - only file base name is changeable; extension is locked to current photo extension
+  - if base name contains characters outside `A-Za-z0-9`, it is transliterated to ASCII and normalized to camelCase
 
 Response: updated photo in `data`.
 

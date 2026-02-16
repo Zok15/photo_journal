@@ -181,11 +181,56 @@ class SeriesPhotoUploadTest extends TestCase
         ]);
 
         $response->assertOk();
-        $response->assertJsonPath('data.original_name', 'macro-new.jpg');
+        $response->assertJsonPath('data.original_name', 'macroNew.jpg');
         $this->assertDatabaseHas('photos', [
             'id' => $photo->id,
-            'original_name' => 'macro-new.jpg',
+            'original_name' => 'macroNew.jpg',
         ]);
+    }
+
+    public function test_update_keeps_existing_extension_even_if_user_changes_it(): void
+    {
+        $series = Series::query()->create([
+            'user_id' => $this->user->id,
+            'title' => 'Rename',
+            'description' => 'Extension lock',
+        ]);
+
+        $photo = $series->photos()->create([
+            'path' => 'photos/series/'.$series->id.'/frame.png',
+            'original_name' => 'frame.png',
+        ]);
+
+        $response = $this->patchJson("/api/v1/series/{$series->id}/photos/{$photo->id}", [
+            'original_name' => 'new-name.jpg',
+        ]);
+
+        $response->assertOk();
+        $response->assertJsonPath('data.original_name', 'newName.png');
+    }
+
+    public function test_update_transliterates_non_latin_name_to_ascii_camel_case(): void
+    {
+        $series = Series::query()->create([
+            'user_id' => $this->user->id,
+            'title' => 'Rename',
+            'description' => 'Transliteration',
+        ]);
+
+        $photo = $series->photos()->create([
+            'path' => 'photos/series/'.$series->id.'/macro.jpg',
+            'original_name' => 'macro.jpg',
+        ]);
+
+        $response = $this->patchJson("/api/v1/series/{$series->id}/photos/{$photo->id}", [
+            'original_name' => 'Привет мир 2026',
+        ]);
+
+        $response->assertOk();
+
+        $normalized = (string) $response->json('data.original_name');
+        $this->assertMatchesRegularExpression('/^[a-z][A-Za-z0-9]*\.jpg$/', $normalized);
+        $this->assertStringNotContainsString(' ', $normalized);
     }
 
     public function test_destroy_deletes_photo_and_file(): void
