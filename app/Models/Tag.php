@@ -17,7 +17,7 @@ class Tag extends Model
         );
     }
 
-    private static function normalizeTagName(string $value): string
+    public static function normalizeTagName(string $value): string
     {
         $prepared = Str::of($value)
             ->ascii()

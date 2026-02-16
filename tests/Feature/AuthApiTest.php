@@ -50,6 +50,24 @@ class AuthApiTest extends TestCase
         $response->assertUnauthorized();
     }
 
+    public function test_profile_alias_auth_me_is_equivalent_for_get(): void
+    {
+        $user = User::factory()->create([
+            'name' => 'Alias Check',
+            'journal_title' => 'Bird Notes',
+        ]);
+
+        Sanctum::actingAs($user);
+
+        $profile = $this->getJson('/api/v1/profile');
+        $authMe = $this->getJson('/api/v1/auth/me');
+
+        $profile->assertOk();
+        $authMe->assertOk();
+
+        $this->assertSame($profile->json(), $authMe->json());
+    }
+
     public function test_logout_revokes_current_token(): void
     {
         $register = $this->postJson('/api/v1/auth/register', [
@@ -116,5 +134,28 @@ class AuthApiTest extends TestCase
 
         $response->assertUnprocessable();
         $response->assertJsonValidationErrors(['email']);
+    }
+
+    public function test_profile_alias_auth_me_is_equivalent_for_patch(): void
+    {
+        $user = User::factory()->create([
+            'name' => 'Before',
+            'journal_title' => null,
+        ]);
+
+        Sanctum::actingAs($user);
+
+        $payload = [
+            'name' => 'After Alias',
+            'journal_title' => 'Alias Journal',
+        ];
+
+        $profile = $this->patchJson('/api/v1/profile', $payload);
+        $authMe = $this->patchJson('/api/v1/auth/me', $payload);
+
+        $profile->assertOk();
+        $authMe->assertOk();
+
+        $this->assertSame($profile->json(), $authMe->json());
     }
 }

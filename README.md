@@ -7,11 +7,21 @@ Pet project: Laravel API для работы с фотосериями с аси
 
 ## Stack
 
-Backend: Laravel (PHP 8.4)  
+Backend: Laravel 12 (PHP 8.2+)  
 Database: MySQL (development)  
 Queues: Laravel queue (database driver)  
 Frontend: Vue + Vite (pnpm)  
 DB UI (dev): Adminer  
+
+---
+
+## Requirements
+
+- PHP `^8.2`
+- Laravel Framework `^12.0`
+- Composer 2.x
+- Node.js 20+ and pnpm
+- MySQL 8+ (for local app runtime)
 
 ---
 
@@ -57,7 +67,8 @@ $ pnpm run dev
 5. Быстрый smoke-check auth
 - `curl -X POST http://127.0.0.1:8091/api/v1/auth/login -H "Content-Type: application/json" -d '{"email":"admin@example.com","password":"admin12345"}'`
 - использовать `token` из ответа в заголовке `Authorization: Bearer <token>`
-- `curl http://127.0.0.1:8091/api/v1/auth/me -H "Authorization: Bearer <token>"`
+- `curl http://127.0.0.1:8091/api/v1/profile -H "Authorization: Bearer <token>"`
+- `curl http://127.0.0.1:8091/api/v1/auth/me -H "Authorization: Bearer <token>"` (deprecated alias, still supported)
 
 Админка:
 - URL: `http://127.0.0.1:8091/admin`
@@ -158,6 +169,10 @@ $ php artisan outbox:poll
 - `VISION_TAGGER_URL=http://127.0.0.1:8010/tag`
 - `VISION_TAGGER_TIMEOUT=20`
 - `VISION_TAGGER_MAX_TAGS=8`
+
+Флаги пайплайна обработки серии:
+- `PHOTO_PREVIEW_ENABLED=true`
+- `PHOTO_EXIF_ENABLED=true`
 
 После этого автотеги при загрузке и кнопка "Обновить теги" на странице серии будут использовать распознавание по содержимому файла.
 

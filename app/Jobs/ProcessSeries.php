@@ -20,11 +20,26 @@ class ProcessSeries implements ShouldQueue
     {
         $series = Series::query()->findOrFail($this->seriesId);
 
-        // TODO:
-        // - генерация превью
-        // - анализ EXIF
-        // - AI-теги / рекомендации (позже)
+        if ((bool) config('photo_processing.preview_enabled', true)) {
+            $this->generatePreviews($series);
+        }
+
+        if ((bool) config('photo_processing.exif_enabled', true)) {
+            $this->extractExif($series);
+        }
 
         event(new SeriesUploaded($series));
+    }
+
+    private function generatePreviews(Series $series): void
+    {
+        // Placeholder for staged preview generation rollout.
+        unset($series);
+    }
+
+    private function extractExif(Series $series): void
+    {
+        // Placeholder for staged EXIF extraction rollout.
+        unset($series);
     }
 }

@@ -15,6 +15,8 @@ Route::prefix('v1')->group(function () {
         Route::post('auth/logout', [AuthController::class, 'logout']);
         Route::get('profile', [ProfileController::class, 'show']);
         Route::patch('profile', [ProfileController::class, 'update']);
+        Route::get('auth/me', [ProfileController::class, 'show']);
+        Route::patch('auth/me', [ProfileController::class, 'update']);
 
         Route::apiResource('series', SeriesController::class)
             ->only(['index', 'store', 'show', 'update', 'destroy']);

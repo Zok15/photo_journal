@@ -75,6 +75,12 @@ Response `200`:
 }
 ```
 
+### `GET /auth/me` (deprecated alias)
+
+Requires Bearer token.
+
+Response `200`: exactly the same payload and status codes as `GET /profile`.
+
 ### `POST /auth/logout`
 
 Requires Bearer token. Deletes current access token and returns `204`.
@@ -90,6 +96,12 @@ Fields:
 
 Response `200`: updated current user in `data`.
 
+### `PATCH /auth/me` (deprecated alias)
+
+Requires Bearer token.
+
+Fields and response are exactly the same as `PATCH /profile`.
+
 ## Bearer usage
 
 Protected routes require:
@@ -102,7 +114,7 @@ Authorization: Bearer <token>
 
 1. Call `POST /auth/login` (or `POST /auth/register`).
 2. Save `token` on frontend and attach header `Authorization: Bearer <token>` to all protected requests.
-3. On app start, call `GET /profile` to restore authenticated user state.
+3. On app start, call `GET /profile` to restore authenticated user state (`/auth/me` remains as deprecated alias).
 4. On `401`, clear token and redirect to login.
 5. On explicit logout, call `POST /auth/logout`, then clear token on frontend.
 
@@ -166,6 +178,15 @@ Status codes:
 Query params:
 - `per_page` (optional, int, 1..100)
 - `page` (optional, int, >= 1)
+- `search` (optional, string; search in `title` and `description`)
+- `tag` (optional, string; one tag or multiple tags separated by spaces/commas)
+- `date_from` (optional, date, `YYYY-MM-DD`, inclusive)
+- `date_to` (optional, date, `YYYY-MM-DD`, inclusive)
+- `sort` (optional, `new|old`, default `new`)
+
+Tag filter normalization:
+- input tag is normalized to camelCase
+- examples: `Red Bird`, `red-bird`, `red bird` => `redBird`
 
 Response: Laravel paginator with `data`.
 

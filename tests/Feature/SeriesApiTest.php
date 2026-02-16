@@ -9,8 +9,8 @@ use App\Models\Tag;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
-use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Queue;
+use Illuminate\Support\Facades\Storage;
 use Laravel\Sanctum\Sanctum;
 use Tests\TestCase;
 
@@ -201,6 +201,158 @@ class SeriesApiTest extends TestCase
             'title' => 'After',
             'description' => 'After desc',
         ]);
+    }
+
+    public function test_index_without_filters_preserves_default_behavior(): void
+    {
+        $older = Series::query()->create([
+            'user_id' => $this->user->id,
+            'title' => 'Older',
+            'description' => 'First',
+        ]);
+        $older->forceFill([
+            'created_at' => now()->subDay(),
+            'updated_at' => now()->subDay(),
+        ])->saveQuietly();
+
+        $newer = Series::query()->create([
+            'user_id' => $this->user->id,
+            'title' => 'Newer',
+            'description' => 'Second',
+        ]);
+        $newer->forceFill([
+            'created_at' => now(),
+            'updated_at' => now(),
+        ])->saveQuietly();
+
+        $response = $this->getJson('/api/v1/series');
+        $response->assertOk();
+        $ids = collect($response->json('data'))->pluck('id')->all();
+
+        $this->assertSame([$newer->id, $older->id], $ids);
+    }
+
+    public function test_index_filters_by_search(): void
+    {
+        Series::query()->create([
+            'user_id' => $this->user->id,
+            'title' => 'Bird Album',
+            'description' => 'Seaside',
+        ]);
+        Series::query()->create([
+            'user_id' => $this->user->id,
+            'title' => 'Flower Album',
+            'description' => 'Garden',
+        ]);
+
+        $response = $this->getJson('/api/v1/series?search=seaside');
+        $response->assertOk();
+        $this->assertCount(1, $response->json('data'));
+        $response->assertJsonPath('data.0.title', 'Bird Album');
+    }
+
+    public function test_index_filters_by_tag_with_normalization(): void
+    {
+        $redBird = Tag::query()->create(['name' => 'redBird']);
+        $blueBird = Tag::query()->create(['name' => 'blueBird']);
+
+        $seriesWithRed = Series::query()->create([
+            'user_id' => $this->user->id,
+            'title' => 'Red',
+            'description' => 'Tagged',
+        ]);
+        $seriesWithBlue = Series::query()->create([
+            'user_id' => $this->user->id,
+            'title' => 'Blue',
+            'description' => 'Tagged',
+        ]);
+
+        $seriesWithRed->tags()->attach($redBird->id);
+        $seriesWithBlue->tags()->attach($blueBird->id);
+
+        foreach (['Red Bird', 'red-bird', 'red bird'] as $tagQuery) {
+            $response = $this->getJson('/api/v1/series?tag='.urlencode($tagQuery));
+            $response->assertOk();
+            $this->assertCount(1, $response->json('data'));
+            $response->assertJsonPath('data.0.id', $seriesWithRed->id);
+        }
+    }
+
+    public function test_index_filters_by_date_range(): void
+    {
+        $inside = Series::query()->create([
+            'user_id' => $this->user->id,
+            'title' => 'Inside',
+            'description' => null,
+        ]);
+        $inside->forceFill([
+            'created_at' => now()->subDays(2),
+            'updated_at' => now()->subDays(2),
+        ])->saveQuietly();
+        Series::query()->create([
+            'user_id' => $this->user->id,
+            'title' => 'Outside',
+            'description' => null,
+        ])->forceFill([
+            'created_at' => now()->subDays(10),
+            'updated_at' => now()->subDays(10),
+        ])->saveQuietly();
+
+        $from = now()->subDays(3)->toDateString();
+        $to = now()->subDay()->toDateString();
+
+        $response = $this->getJson("/api/v1/series?date_from={$from}&date_to={$to}");
+        $response->assertOk();
+        $this->assertCount(1, $response->json('data'));
+        $response->assertJsonPath('data.0.id', $inside->id);
+    }
+
+    public function test_index_sorts_oldest_when_requested(): void
+    {
+        $older = Series::query()->create([
+            'user_id' => $this->user->id,
+            'title' => 'Older sort',
+            'description' => null,
+        ]);
+        $older->forceFill([
+            'created_at' => now()->subDay(),
+            'updated_at' => now()->subDay(),
+        ])->saveQuietly();
+        $newer = Series::query()->create([
+            'user_id' => $this->user->id,
+            'title' => 'Newer sort',
+            'description' => null,
+        ]);
+        $newer->forceFill([
+            'created_at' => now(),
+            'updated_at' => now(),
+        ])->saveQuietly();
+
+        $response = $this->getJson('/api/v1/series?sort=old');
+        $response->assertOk();
+        $ids = collect($response->json('data'))->pluck('id')->all();
+        $this->assertSame([$older->id, $newer->id], $ids);
+    }
+
+    public function test_index_supports_page_and_per_page_parameters(): void
+    {
+        for ($i = 1; $i <= 3; $i++) {
+            $series = Series::query()->create([
+                'user_id' => $this->user->id,
+                'title' => "Series {$i}",
+                'description' => null,
+            ]);
+            $series->forceFill([
+                'created_at' => now()->subMinutes($i),
+                'updated_at' => now()->subMinutes($i),
+            ])->saveQuietly();
+        }
+
+        $response = $this->getJson('/api/v1/series?per_page=2&page=2');
+        $response->assertOk();
+        $response->assertJsonPath('per_page', 2);
+        $response->assertJsonPath('current_page', 2);
+        $this->assertCount(1, $response->json('data'));
     }
 
     public function test_attach_tags_adds_series_tags_without_duplicates_and_normalizes_names(): void

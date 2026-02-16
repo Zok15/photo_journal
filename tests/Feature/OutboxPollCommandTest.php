@@ -66,5 +66,44 @@ class OutboxPollCommandTest extends TestCase
         Queue::assertNotPushed(DispatchOutboxEvent::class, fn (DispatchOutboxEvent $job) => $job->outboxEventId === $future->id);
         Queue::assertNotPushed(DispatchOutboxEvent::class, fn (DispatchOutboxEvent $job) => $job->outboxEventId === $done->id);
         Queue::assertNotPushed(DispatchOutboxEvent::class, fn (DispatchOutboxEvent $job) => $job->outboxEventId === $failed->id);
+
+        $this->assertDatabaseHas('outbox_events', [
+            'id' => $dueWithoutDelay->id,
+            'status' => 'processing',
+            'attempts' => 1,
+        ]);
+        $this->assertDatabaseHas('outbox_events', [
+            'id' => $dueWithDelay->id,
+            'status' => 'processing',
+            'attempts' => 1,
+        ]);
+    }
+
+    public function test_outbox_poll_does_not_claim_same_event_twice_in_parallel_runs(): void
+    {
+        Queue::fake();
+
+        $event = OutboxEvent::query()->create([
+            'type' => 'series.uploaded',
+            'payload' => ['series_id' => 7],
+            'status' => 'pending',
+            'available_at' => null,
+        ]);
+
+        $this->artisan('outbox:poll --limit=50')
+            ->expectsOutput('Dispatched 1 outbox events.')
+            ->assertExitCode(0);
+
+        $this->artisan('outbox:poll --limit=50')
+            ->expectsOutput('Dispatched 0 outbox events.')
+            ->assertExitCode(0);
+
+        Queue::assertPushed(DispatchOutboxEvent::class, 1);
+        Queue::assertPushed(DispatchOutboxEvent::class, fn (DispatchOutboxEvent $job) => $job->outboxEventId === $event->id);
+        $this->assertDatabaseHas('outbox_events', [
+            'id' => $event->id,
+            'status' => 'processing',
+            'attempts' => 1,
+        ]);
     }
 }

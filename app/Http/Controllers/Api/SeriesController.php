@@ -13,7 +13,6 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Storage;
-use Illuminate\Support\Str;
 
 class SeriesController extends Controller
 {
@@ -26,17 +25,62 @@ class SeriesController extends Controller
         $validated = $request->validate([
             'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
             'page' => ['nullable', 'integer', 'min:1'],
+            'search' => ['nullable', 'string', 'max:255'],
+            'tag' => ['nullable', 'string', 'max:255'],
+            'date_from' => ['nullable', 'date'],
+            'date_to' => ['nullable', 'date'],
+            'sort' => ['nullable', 'in:new,old'],
         ]);
 
         $perPage = $validated['per_page'] ?? 15;
-
-        $series = Series::query()
+        $query = Series::query()
             ->where('user_id', $request->user()->id)
             ->with('tags')
-            ->withCount('photos')
-            ->latest()
-            ->paginate($perPage)
-            ->withQueryString();
+            ->withCount('photos');
+
+        $search = trim((string) ($validated['search'] ?? ''));
+        if ($search !== '') {
+            $query->where(function ($builder) use ($search): void {
+                $builder
+                    ->where('title', 'like', '%'.$search.'%')
+                    ->orWhere('description', 'like', '%'.$search.'%');
+            });
+        }
+
+        $tagFilter = trim((string) ($validated['tag'] ?? ''));
+        if ($tagFilter !== '') {
+            $tags = collect(explode(',', $tagFilter))
+                ->map(fn ($tag): string => Tag::normalizeTagName((string) $tag))
+                ->filter()
+                ->unique()
+                ->values()
+                ->all();
+
+            foreach ($tags as $tagName) {
+                $query->whereHas('tags', function ($builder) use ($tagName): void {
+                    $builder->where('name', $tagName);
+                });
+            }
+        }
+
+        $dateFrom = $validated['date_from'] ?? null;
+        $dateTo = $validated['date_to'] ?? null;
+        if ($dateFrom !== null) {
+            $query->whereDate('created_at', '>=', $dateFrom);
+        }
+        if ($dateTo !== null) {
+            $query->whereDate('created_at', '<=', $dateTo);
+        }
+
+        $sort = $validated['sort'] ?? null;
+        if ($sort === 'old') {
+            $query->oldest();
+        } else {
+            // Keep existing behavior when no sort is provided.
+            $query->latest();
+        }
+
+        $series = $query->paginate($perPage)->withQueryString();
 
         return response()->json($series);
     }
@@ -140,7 +184,7 @@ class SeriesController extends Controller
 
         $series->delete();
 
-        if (!empty($photoPaths)) {
+        if (! empty($photoPaths)) {
             Storage::disk($disk)->delete($photoPaths);
         }
 
@@ -175,7 +219,7 @@ class SeriesController extends Controller
         // Keep tag table compact: remove tags that are no longer referenced.
         $stillUsedInSeries = $tag->series()->exists();
         $stillUsedInPhotos = $tag->photos()->exists();
-        if (!$stillUsedInSeries && !$stillUsedInPhotos) {
+        if (! $stillUsedInSeries && ! $stillUsedInPhotos) {
             $tag->delete();
         }
 
@@ -201,21 +245,8 @@ class SeriesController extends Controller
 
     private function normalizeTagNames(array $tags): array
     {
-        $normalize = function (string $name): string {
-            $trimmed = trim($name);
-            if ($trimmed === '') {
-                return '';
-            }
-
-            $ascii = Str::ascii($trimmed);
-            $words = preg_replace('/[^A-Za-z0-9]+/', ' ', $ascii) ?? '';
-            $camel = Str::camel(trim($words));
-
-            return $camel !== '' ? $camel : 'tag';
-        };
-
         return collect($tags)
-            ->map($normalize)
+            ->map(fn (string $name): string => Tag::normalizeTagName($name))
             ->filter()
             ->unique()
             ->values()
@@ -246,6 +277,7 @@ class SeriesController extends Controller
                         $existing->save();
                         $existing->refresh();
                     }
+
                     return $existing;
                 }
             }
@@ -253,5 +285,4 @@ class SeriesController extends Controller
             throw $e;
         }
     }
-
 }

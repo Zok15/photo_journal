@@ -22,7 +22,7 @@ class DispatchOutboxEvent implements ShouldQueue
     {
         // We fetch + lock one outbox row in a transaction to ensure:
         // 1) only one worker updates this row at a time;
-        // 2) state transitions remain consistent (pending -> processing -> done/failed).
+        // 2) state transitions remain consistent (processing -> done/failed).
         $dispatchContext = DB::transaction(function () {
             /** @var OutboxEvent $event */
             $event = OutboxEvent::query()
@@ -35,29 +35,38 @@ class DispatchOutboxEvent implements ShouldQueue
                 return null;
             }
 
-            if ($event->attempts >= $this->maxAttempts()) {
-                $event->update([
-                    'status' => 'failed',
-                    'available_at' => null,
-                ]);
+            if ($event->status === 'pending') {
+                if ($event->attempts >= $this->maxAttempts()) {
+                    $event->update([
+                        'status' => 'failed',
+                        'available_at' => null,
+                    ]);
 
+                    return null;
+                }
+
+                $event->update([
+                    'status' => 'processing',
+                    'attempts' => $event->attempts + 1,
+                    'last_error' => null,
+                ]);
+            }
+
+            if ($event->status !== 'processing') {
                 return null;
             }
 
-            $attempt = $event->attempts + 1;
-
-            $event->update([
-                'status' => 'processing',
-                'attempts' => $attempt,
-                'last_error' => null,
-            ]);
+            if ($event->attempts < 1) {
+                $event->attempts = 1;
+                $event->save();
+            }
 
             return [
                 'event_id' => $event->id,
                 'event_key' => $event->integrationEventKey(),
                 'type' => $event->type,
                 'payload' => (array) $event->payload,
-                'attempt' => $attempt,
+                'attempt' => (int) $event->attempts,
             ];
         });
 
@@ -75,6 +84,7 @@ class DispatchOutboxEvent implements ShouldQueue
 
             OutboxEvent::query()
                 ->whereKey($this->outboxEventId)
+                ->where('status', 'processing')
                 ->update([
                     'status' => 'done',
                     'processed_at' => now(),
@@ -139,6 +149,7 @@ class DispatchOutboxEvent implements ShouldQueue
 
         OutboxEvent::query()
             ->whereKey($this->outboxEventId)
+            ->where('status', 'processing')
             ->update([
                 'status' => $status,
                 'available_at' => $availableAt,
