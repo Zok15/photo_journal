@@ -53,7 +53,7 @@ class SeriesApiTest extends TestCase
             'title' => 'Winter walk',
             'description' => 'Evening city lights',
             'photos' => [
-                UploadedFile::fake()->image('one.jpg', 1200, 800),
+                $this->fakeImage('one.jpg'),
             ],
         ];
 
@@ -97,8 +97,8 @@ class SeriesApiTest extends TestCase
         ];
 
         $files = [
-            UploadedFile::fake()->image('ok.jpg', 1200, 800),
-            UploadedFile::fake()->image('fail.jpg', 1200, 800),
+            $this->fakeImage('ok.jpg'),
+            $this->fakeImage('fail.jpg'),
         ];
 
         $writes = 0;
@@ -155,7 +155,7 @@ class SeriesApiTest extends TestCase
 
         $photo->tags()->attach($tag->id);
 
-        $response = $this->getJson("/api/v1/series/{$series->id}");
+        $response = $this->getJson("/api/v1/series/{$series->id}?include_photos=1");
 
         $response->assertOk();
         $response->assertJsonPath('data.id', $series->id);
@@ -225,5 +225,15 @@ class SeriesApiTest extends TestCase
 
         $response->assertNoContent();
         Storage::disk('local')->assertMissing($photo->path);
+    }
+
+    private function fakeImage(string $name): UploadedFile
+    {
+        $png = base64_decode(
+            'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO7YfU8AAAAASUVORK5CYII=',
+            true
+        );
+
+        return UploadedFile::fake()->createWithContent($name, $png);
     }
 }

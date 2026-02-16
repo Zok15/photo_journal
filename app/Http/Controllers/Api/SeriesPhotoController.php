@@ -10,13 +10,15 @@ use App\Http\Requests\UpdateSeriesPhotoRequest;
 use App\Models\Photo;
 use App\Models\Series;
 use App\Models\Tag;
+use App\Services\PhotoBatchUploader;
+use Illuminate\Database\QueryException;
 use Illuminate\Http\JsonResponse;
-use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Storage;
-use RuntimeException;
 
 class SeriesPhotoController extends Controller
 {
+    public function __construct(private PhotoBatchUploader $photoBatchUploader) {}
+
     public function index(ListSeriesPhotosRequest $request, Series $series): JsonResponse
     {
         $validated = $request->validated();
@@ -28,6 +30,9 @@ class SeriesPhotoController extends Controller
         $photos = $series->photos()
             ->with('tags')
             ->orderBy($sortBy, $sortDir)
+            ->when($sortBy !== 'id', function ($query) use ($sortDir) {
+                $query->orderBy('id', $sortDir);
+            })
             ->paginate($perPage)
             ->withQueryString();
 
@@ -37,25 +42,21 @@ class SeriesPhotoController extends Controller
     public function store(StoreSeriesPhotosRequest $request, Series $series): JsonResponse
     {
         $disk = config('filesystems.default');
-        $directory = "photos/series/{$series->id}";
         $files = $request->file('photos', []);
+        $uploadResult = $this->photoBatchUploader->uploadToSeries($series, $files, $disk);
+        $created = $uploadResult['created'];
+        $failed = $uploadResult['failed'];
 
-        $created = [];
-
-        /** @var UploadedFile $file */
-        foreach ($files as $file) {
-            $path = $this->storeOrFail($file, $directory, $disk);
-
-            $created[] = $series->photos()->create([
-                'path' => $path,
-                'original_name' => $file->getClientOriginalName(),
-                'size' => $file->getSize(),
-                'mime' => $file->getClientMimeType(),
-            ]);
+        if (count($created) === 0) {
+            return response()->json([
+                'message' => 'No photos were saved.',
+                'photos_failed' => $failed,
+            ], 422);
         }
 
         return response()->json([
-            'data' => $created,
+            'photos_created' => $created,
+            'photos_failed' => $failed,
         ], 201);
     }
 
@@ -100,7 +101,7 @@ class SeriesPhotoController extends Controller
         $names = $this->normalizeTagNames($request->validated()['tags']);
 
         $tags = collect($names)->map(function (string $name) {
-            return Tag::firstOrCreate(['name' => $name]);
+            return $this->findOrCreateTagSafely($name);
         });
 
         $photo->tags()->sync($tags->pluck('id')->all());
@@ -118,7 +119,7 @@ class SeriesPhotoController extends Controller
         $names = $this->normalizeTagNames($request->validated()['tags']);
 
         $tags = collect($names)->map(function (string $name) {
-            return Tag::firstOrCreate(['name' => $name]);
+            return $this->findOrCreateTagSafely($name);
         });
 
         $photo->tags()->syncWithoutDetaching($tags->pluck('id')->all());
@@ -150,22 +151,47 @@ class SeriesPhotoController extends Controller
 
     private function normalizeTagNames(array $tags): array
     {
+        $normalize = function (string $name): string {
+            $trimmed = trim($name);
+
+            if (function_exists('mb_strtolower')) {
+                return mb_strtolower($trimmed);
+            }
+
+            return strtolower($trimmed);
+        };
+
         return collect($tags)
-            ->map(fn (string $name) => strtolower(trim($name)))
+            ->map($normalize)
             ->filter()
             ->unique()
             ->values()
             ->all();
     }
 
-    private function storeOrFail(UploadedFile $file, string $directoryPath, string $disk): string
+    private function findOrCreateTagSafely(string $name): Tag
     {
-        $path = $file->store($directoryPath, $disk);
+        try {
+            return Tag::firstOrCreate(['name' => $name]);
+        } catch (QueryException $e) {
+            // Concurrent insert can violate unique(name). In that case
+            // read and return the row created by the other request.
+            if ($this->isUniqueViolation($e)) {
+                $tag = Tag::query()->where('name', $name)->first();
 
-        if (!is_string($path) || $path === '') {
-            throw new RuntimeException('Failed to store uploaded file.');
+                if ($tag !== null) {
+                    return $tag;
+                }
+            }
+
+            throw $e;
         }
+    }
 
-        return $path;
+    private function isUniqueViolation(QueryException $e): bool
+    {
+        $sqlState = $e->errorInfo[0] ?? null;
+
+        return $sqlState === '23000';
     }
 }

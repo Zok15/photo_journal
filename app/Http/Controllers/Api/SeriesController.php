@@ -6,14 +6,15 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\StoreSeriesWithPhotosRequest;
 use App\Jobs\ProcessSeries;
 use App\Models\Series;
+use App\Services\PhotoBatchUploader;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Storage;
-use RuntimeException;
 
 class SeriesController extends Controller
 {
+    public function __construct(private PhotoBatchUploader $photoBatchUploader) {}
+
     public function index(Request $request): JsonResponse
     {
         $validated = $request->validate([
@@ -37,48 +38,22 @@ class SeriesController extends Controller
         $data = $request->validated();
 
         $disk = config('filesystems.default');
-        $directory = 'photos/series';
         $files = $request->file('photos', []);
         $series = Series::create([
             'title' => $data['title'],
             'description' => $data['description'] ?? null,
         ]);
 
-        $directoryPath = $directory.'/'.$series->id;
-        $storedPaths = [];
-        $created = [];
-        $failed = [];
-
-        /** @var UploadedFile $file */
-        foreach ($files as $file) {
-            try {
-                $path = $this->storeOrFail($file, $directoryPath, $disk);
-                $storedPaths[] = $path;
-
-                $created[] = $series->photos()->create([
-                    'path' => $path,
-                    'original_name' => $file->getClientOriginalName(),
-                    'size' => $file->getSize(),
-                    'mime' => $file->getClientMimeType(),
-                ]);
-            } catch (\Throwable $e) {
-                $failed[] = [
-                    'original_name' => $file->getClientOriginalName(),
-                    'error' => $e->getMessage(),
-                ];
-            }
-        }
+        $uploadResult = $this->photoBatchUploader->uploadToSeries($series, $files, $disk);
+        $created = $uploadResult['created'];
+        $failed = $uploadResult['failed'];
 
         if (count($created) === 0) {
-            if (!empty($storedPaths)) {
-                Storage::disk($disk)->delete($storedPaths);
-            }
-
             $series->delete();
 
             return response()->json([
                 'message' => 'No photos were saved.',
-                'failed' => $failed,
+                'photos_failed' => $failed,
             ], 422);
         }
 
@@ -92,9 +67,24 @@ class SeriesController extends Controller
         ], 201);
     }
 
-    public function show(Series $series): JsonResponse
+    public function show(Request $request, Series $series): JsonResponse
     {
-        $series->load(['photos.tags']);
+        $validated = $request->validate([
+            'include_photos' => ['nullable', 'boolean'],
+            'photos_limit' => ['nullable', 'integer', 'min:1', 'max:100'],
+        ]);
+
+        if ($request->boolean('include_photos')) {
+            $limit = $validated['photos_limit'] ?? 30;
+
+            $series->load([
+                'photos' => fn ($query) => $query
+                    ->with('tags')
+                    ->latest()
+                    ->limit($limit),
+            ]);
+        }
+
         $series->loadCount('photos');
 
         return response()->json([
@@ -134,14 +124,4 @@ class SeriesController extends Controller
         return response()->json(status: 204);
     }
 
-    private function storeOrFail(UploadedFile $file, string $directoryPath, string $disk): string
-    {
-        $path = $file->store($directoryPath, $disk);
-
-        if (!is_string($path) || $path === '') {
-            throw new RuntimeException('Failed to store uploaded file.');
-        }
-
-        return $path;
-    }
 }

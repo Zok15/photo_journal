@@ -24,8 +24,8 @@ class SeriesPhotoUploadTest extends TestCase
         ]);
 
         $files = [
-            UploadedFile::fake()->image('first.jpg', 1200, 800),
-            UploadedFile::fake()->image('second.png', 800, 600),
+            $this->fakeImage('first.jpg'),
+            $this->fakeImage('second.png'),
         ];
 
         $response = $this->post("/api/v1/series/{$series->id}/photos", [
@@ -33,7 +33,8 @@ class SeriesPhotoUploadTest extends TestCase
         ]);
 
         $response->assertCreated();
-        $response->assertJsonCount(2, 'data');
+        $response->assertJsonCount(2, 'photos_created');
+        $response->assertJsonCount(0, 'photos_failed');
 
         $this->assertDatabaseHas('photos', [
             'series_id' => $series->id,
@@ -45,7 +46,7 @@ class SeriesPhotoUploadTest extends TestCase
             'original_name' => 'second.png',
         ]);
 
-        $storedPaths = collect($response->json('data'))
+        $storedPaths = collect($response->json('photos_created'))
             ->pluck('path')
             ->all();
 
@@ -85,8 +86,11 @@ class SeriesPhotoUploadTest extends TestCase
 
         $response->assertOk();
         $response->assertJsonCount(2, 'data');
-        $response->assertJsonPath('data.0.id', $photoA->id);
-        $response->assertJsonPath('data.0.series_id', $series->id);
+
+        $rows = collect($response->json('data'));
+
+        $this->assertTrue($rows->contains(fn (array $row): bool => $row['id'] === $photoA->id));
+        $this->assertTrue($rows->every(fn (array $row): bool => $row['series_id'] === $series->id));
     }
 
     public function test_index_supports_pagination_and_sorting(): void
@@ -315,5 +319,15 @@ class SeriesPhotoUploadTest extends TestCase
             'photo_id' => $photo->id,
             'tag_id' => $first->id,
         ]);
+    }
+
+    private function fakeImage(string $name): UploadedFile
+    {
+        $png = base64_decode(
+            'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO7YfU8AAAAASUVORK5CYII=',
+            true
+        );
+
+        return UploadedFile::fake()->createWithContent($name, $png);
     }
 }
