@@ -117,7 +117,18 @@ class SeriesController extends Controller
 
     public function destroy(Series $series): JsonResponse
     {
+        $disk = config('filesystems.default');
+        $photoPaths = $series->photos()
+            ->pluck('path')
+            ->filter()
+            ->values()
+            ->all();
+
         $series->delete();
+
+        if (!empty($photoPaths)) {
+            Storage::disk($disk)->delete($photoPaths);
+        }
 
         return response()->json(status: 204);
     }

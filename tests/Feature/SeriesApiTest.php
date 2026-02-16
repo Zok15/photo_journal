@@ -202,4 +202,28 @@ class SeriesApiTest extends TestCase
             'id' => $series->id,
         ]);
     }
+
+    public function test_destroy_deletes_photo_files_from_storage(): void
+    {
+        config()->set('filesystems.default', 'local');
+        Storage::fake('local');
+
+        $series = Series::query()->create([
+            'title' => 'To delete with files',
+            'description' => 'Cleanup test',
+        ]);
+
+        $photo = $series->photos()->create([
+            'path' => 'photos/series/'.$series->id.'/cleanup.jpg',
+            'original_name' => 'cleanup.jpg',
+        ]);
+
+        Storage::disk('local')->put($photo->path, 'content');
+        Storage::disk('local')->assertExists($photo->path);
+
+        $response = $this->deleteJson("/api/v1/series/{$series->id}");
+
+        $response->assertNoContent();
+        Storage::disk('local')->assertMissing($photo->path);
+    }
 }
