@@ -37,6 +37,35 @@ $ pnpm run dev
 
 ---
 
+## Frontend Ready Checklist
+
+Перед стартом разработки UI:
+
+1. Поднять базу и миграции
+- `php artisan migrate`
+
+2. Заполнить демо-данные (админ + стартовая серия/фото/теги)
+- `php artisan db:seed`
+
+3. Проверить CORS и API URL
+- `CORS_ALLOWED_ORIGINS=http://localhost:5173,http://127.0.0.1:5173`
+- `VITE_API_BASE_URL=http://127.0.0.1:8091/api/v1`
+
+4. Запустить backend на отдельном порту
+- `php artisan serve --host=127.0.0.1 --port=8091`
+
+5. Быстрый smoke-check auth
+- `curl -X POST http://127.0.0.1:8091/api/v1/auth/login -H "Content-Type: application/json" -d '{"email":"admin@example.com","password":"admin12345"}'`
+- использовать `token` из ответа в заголовке `Authorization: Bearer <token>`
+- `curl http://127.0.0.1:8091/api/v1/auth/me -H "Authorization: Bearer <token>"`
+
+Админка:
+- URL: `http://127.0.0.1:8091/admin`
+- Email: `admin@example.com`
+- Password: `admin12345`
+
+---
+
 ## Adminer (development only)
 
 Локальный просмотр данных MySQL:
