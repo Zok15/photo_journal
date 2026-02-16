@@ -94,7 +94,12 @@ Job DispatchOutboxEvent:
 
 ## API (current)
 
-POST /api/v1/series — создать серию и запустить асинхронную обработку
+Актуальный контракт API вынесен в `API.md`.
+
+Кратко:
+- series: CRUD (`/api/v1/series`)
+- photos: CRUD внутри series (`/api/v1/series/{series}/photos`)
+- tags: привязка к фото + ручное создание/редактирование (`/api/v1/tags`)
 
 ---
 
@@ -108,7 +113,6 @@ $ php artisan outbox:poll
 
 ## Roadmap
 
-- Upload photos: POST /api/v1/series/{id}/photos  
 - Preview generation & EXIF parsing in jobs  
 - AI tags and shooting recommendations via outbox  
 - Authentication (Sanctum) + access policies  
