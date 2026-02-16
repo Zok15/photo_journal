@@ -215,6 +215,7 @@ Query params:
 Response:
 - always returns `data` with series fields and `photos_count`
 - includes `photos` (with nested `tags`) only when `include_photos=true`
+- each photo in `photos` may include `preview_url` (temporary/signed URL for image preview in frontend)
 
 ### `PATCH /series/{series}`
 

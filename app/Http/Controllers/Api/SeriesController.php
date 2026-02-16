@@ -9,6 +9,7 @@ use App\Models\Series;
 use App\Services\PhotoBatchUploader;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Storage;
 
 class SeriesController extends Controller
@@ -84,6 +85,7 @@ class SeriesController extends Controller
 
         if ($request->boolean('include_photos')) {
             $limit = $validated['photos_limit'] ?? 30;
+            $disk = config('filesystems.default');
 
             $series->load([
                 'photos' => fn ($query) => $query
@@ -91,6 +93,10 @@ class SeriesController extends Controller
                     ->latest()
                     ->limit($limit),
             ]);
+
+            $series->photos->each(function ($photo) use ($disk): void {
+                $photo->setAttribute('preview_url', $this->resolvePhotoPreviewUrl($disk, $photo->path));
+            });
         }
 
         $series->loadCount('photos');
@@ -134,6 +140,21 @@ class SeriesController extends Controller
         }
 
         return response()->json(status: 204);
+    }
+
+    private function resolvePhotoPreviewUrl(string $disk, ?string $path): ?string
+    {
+        if ($path === null || $path === '') {
+            return null;
+        }
+
+        $storage = Storage::disk($disk);
+
+        try {
+            return $storage->temporaryUrl($path, Carbon::now()->addMinutes(30));
+        } catch (\Throwable) {
+            return $storage->url($path);
+        }
     }
 
 }
