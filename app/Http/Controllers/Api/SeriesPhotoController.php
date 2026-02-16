@@ -13,6 +13,7 @@ use App\Models\Tag;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Storage;
+use RuntimeException;
 
 class SeriesPhotoController extends Controller
 {
@@ -43,7 +44,7 @@ class SeriesPhotoController extends Controller
 
         /** @var UploadedFile $file */
         foreach ($files as $file) {
-            $path = $file->store($directory, $disk);
+            $path = $this->storeOrFail($file, $directory, $disk);
 
             $created[] = $series->photos()->create([
                 'path' => $path,
@@ -155,5 +156,16 @@ class SeriesPhotoController extends Controller
             ->unique()
             ->values()
             ->all();
+    }
+
+    private function storeOrFail(UploadedFile $file, string $directoryPath, string $disk): string
+    {
+        $path = $file->store($directoryPath, $disk);
+
+        if (!is_string($path) || $path === '') {
+            throw new RuntimeException('Failed to store uploaded file.');
+        }
+
+        return $path;
     }
 }
