@@ -68,6 +68,145 @@ class SeriesPhotoUploadTest extends TestCase
         }
     }
 
+    public function test_upload_assigns_auto_tags_from_file_name(): void
+    {
+        config()->set('filesystems.default', 'local');
+        Storage::fake('local');
+
+        $series = Series::query()->create([
+            'user_id' => $this->user->id,
+            'title' => 'Flowers',
+            'description' => 'Spring',
+        ]);
+
+        $file = $this->fakeImage('Blue-Flower_macro_2026.jpg');
+
+        $response = $this->post("/api/v1/series/{$series->id}/photos", [
+            'photos' => [$file],
+        ]);
+
+        $response->assertCreated();
+
+        $tagNames = $series->fresh()->load('tags')->tags->pluck('name')->all();
+
+        $this->assertContains('blue', $tagNames);
+        $this->assertContains('flower', $tagNames);
+        $this->assertContains('macro', $tagNames);
+        $this->assertContains('2026', $tagNames);
+        $this->assertContains(now()->format('Y'), $tagNames);
+        $this->assertContains(strtolower(now()->format('F')), $tagNames);
+        $this->assertNotContains('square', $tagNames);
+        $this->assertNotContains('portrait', $tagNames);
+        $this->assertNotContains('landscape', $tagNames);
+    }
+
+    public function test_upload_normalizes_alpha_numeric_camera_suffixes_in_tags(): void
+    {
+        config()->set('filesystems.default', 'local');
+        Storage::fake('local');
+
+        $series = Series::query()->create([
+            'user_id' => $this->user->id,
+            'title' => 'Birds',
+            'description' => 'Bird set',
+        ]);
+
+        $response = $this->post("/api/v1/series/{$series->id}/photos", [
+            'photos' => [$this->fakeImage('Bird4.jpg')],
+        ]);
+
+        $response->assertCreated();
+
+        $tagNames = $series->fresh()->load('tags')->tags->pluck('name')->all();
+        $this->assertContains('bird', $tagNames);
+        $this->assertNotContains('bird4', $tagNames);
+    }
+
+    public function test_retag_endpoint_rebuilds_auto_tags_for_series_photos(): void
+    {
+        config()->set('filesystems.default', 'local');
+        Storage::fake('local');
+
+        $series = Series::query()->create([
+            'user_id' => $this->user->id,
+            'title' => 'Retag',
+            'description' => 'Auto retag',
+        ]);
+
+        $upload = $this->post("/api/v1/series/{$series->id}/photos", [
+            'photos' => [$this->fakeImage('Red-Rose_2026.jpg')],
+        ]);
+
+        $upload->assertCreated();
+
+        $series->tags()->detach();
+
+        $response = $this->postJson("/api/v1/series/{$series->id}/photos/retag");
+
+        $response->assertOk();
+        $response->assertJsonPath('data.processed', 1);
+        $response->assertJsonPath('data.failed', 0);
+
+        $names = $series->fresh()->load('tags')->tags->pluck('name')->all();
+
+        $this->assertContains('red', $names);
+        $this->assertContains('rose', $names);
+        $this->assertContains('2026', $names);
+    }
+
+    public function test_retag_endpoint_removes_meaningless_numeric_tags(): void
+    {
+        config()->set('filesystems.default', 'local');
+        Storage::fake('local');
+
+        $series = Series::query()->create([
+            'user_id' => $this->user->id,
+            'title' => 'Cleanup',
+            'description' => 'Cleanup numeric tags',
+        ]);
+
+        $upload = $this->post("/api/v1/series/{$series->id}/photos", [
+            'photos' => [$this->fakeImage('IMG_2026_2427.jpg')],
+        ]);
+
+        $upload->assertCreated();
+        $meaningless = Tag::query()->firstOrCreate(['name' => '2427']);
+        $series->tags()->syncWithoutDetaching([$meaningless->id]);
+
+        $response = $this->postJson("/api/v1/series/{$series->id}/photos/retag");
+        $response->assertOk();
+
+        $names = $series->fresh()->load('tags')->tags->pluck('name')->all();
+        $this->assertNotContains('2427', $names);
+        $this->assertContains('2026', $names);
+    }
+
+    public function test_retag_endpoint_removes_low_value_orientation_tags(): void
+    {
+        config()->set('filesystems.default', 'local');
+        Storage::fake('local');
+
+        $series = Series::query()->create([
+            'user_id' => $this->user->id,
+            'title' => 'Cleanup',
+            'description' => 'Cleanup orientation tags',
+        ]);
+
+        $upload = $this->post("/api/v1/series/{$series->id}/photos", [
+            'photos' => [$this->fakeImage('flower.jpg')],
+        ]);
+
+        $upload->assertCreated();
+        $portrait = Tag::query()->firstOrCreate(['name' => 'portrait']);
+        $series->tags()->syncWithoutDetaching([$portrait->id]);
+
+        $response = $this->postJson("/api/v1/series/{$series->id}/photos/retag");
+        $response->assertOk();
+
+        $names = $series->fresh()->load('tags')->tags->pluck('name')->all();
+        $this->assertNotContains('portrait', $names);
+    }
+
     public function test_index_returns_only_photos_for_series(): void
     {
         $series = Series::query()->create([
@@ -351,112 +490,6 @@ class SeriesPhotoUploadTest extends TestCase
         $response = $this->getJson("/api/v1/series/{$series->id}/photos/{$photo->id}");
 
         $response->assertNotFound();
-    }
-
-    public function test_sync_tags_creates_and_attaches_tags(): void
-    {
-        $series = Series::query()->create([
-            'user_id' => $this->user->id,
-            'title' => 'Tagged',
-            'description' => 'Tagged',
-        ]);
-
-        $photo = $series->photos()->create([
-            'path' => 'photos/series/'.$series->id.'/tagged.jpg',
-            'original_name' => 'tagged.jpg',
-        ]);
-
-        $response = $this->putJson("/api/v1/series/{$series->id}/photos/{$photo->id}/tags", [
-            'tags' => ['Street', ' night ', 'night'],
-        ]);
-
-        $response->assertOk();
-
-        $names = collect($response->json('data.tags'))
-            ->pluck('name')
-            ->sort()
-            ->values()
-            ->all();
-
-        $this->assertSame(['night', 'street'], $names);
-
-        $this->assertDatabaseHas('tags', ['name' => 'street']);
-        $this->assertDatabaseHas('tags', ['name' => 'night']);
-
-        $this->assertDatabaseHas('photo_tag', [
-            'photo_id' => $photo->id,
-            'tag_id' => Tag::query()->where('name', 'street')->first()->id,
-        ]);
-    }
-
-    public function test_attach_tags_does_not_detach_existing(): void
-    {
-        $series = Series::query()->create([
-            'user_id' => $this->user->id,
-            'title' => 'Attach',
-            'description' => 'Attach',
-        ]);
-
-        $photo = $series->photos()->create([
-            'path' => 'photos/series/'.$series->id.'/attach.jpg',
-            'original_name' => 'attach.jpg',
-        ]);
-
-        $existing = Tag::query()->create(['name' => 'existing']);
-        $photo->tags()->attach($existing->id);
-
-        $response = $this->postJson("/api/v1/series/{$series->id}/photos/{$photo->id}/tags", [
-            'tags' => ['New'],
-        ]);
-
-        $response->assertOk();
-
-        $names = collect($response->json('data.tags'))
-            ->pluck('name')
-            ->sort()
-            ->values()
-            ->all();
-
-        $this->assertSame(['existing', 'new'], $names);
-
-        $this->assertDatabaseHas('photo_tag', [
-            'photo_id' => $photo->id,
-            'tag_id' => $existing->id,
-        ]);
-    }
-
-    public function test_detach_removes_single_tag(): void
-    {
-        $series = Series::query()->create([
-            'user_id' => $this->user->id,
-            'title' => 'Detach',
-            'description' => 'Detach',
-        ]);
-
-        $photo = $series->photos()->create([
-            'path' => 'photos/series/'.$series->id.'/detach.jpg',
-            'original_name' => 'detach.jpg',
-        ]);
-
-        $first = Tag::query()->create(['name' => 'first']);
-        $second = Tag::query()->create(['name' => 'second']);
-        $photo->tags()->attach([$first->id, $second->id]);
-
-        $response = $this->deleteJson("/api/v1/series/{$series->id}/photos/{$photo->id}/tags/{$first->id}");
-
-        $response->assertOk();
-
-        $names = collect($response->json('data.tags'))
-            ->pluck('name')
-            ->sort()
-            ->values()
-            ->all();
-
-        $this->assertSame(['second'], $names);
-        $this->assertDatabaseMissing('photo_tag', [
-            'photo_id' => $photo->id,
-            'tag_id' => $first->id,
-        ]);
     }
 
     private function fakeImage(string $name): UploadedFile

@@ -12,4 +12,9 @@ class Tag extends Model
     {
         return $this->belongsToMany(Photo::class);
     }
+
+    public function series()
+    {
+        return $this->belongsToMany(Series::class);
+    }
 }

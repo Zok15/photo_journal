@@ -149,7 +149,7 @@ class SeriesApiTest extends TestCase
         ]);
     }
 
-    public function test_show_returns_series_with_photos_tags_and_count(): void
+    public function test_show_returns_series_with_series_tags_and_count(): void
     {
         $series = Series::query()->create([
             'user_id' => $this->user->id,
@@ -157,7 +157,7 @@ class SeriesApiTest extends TestCase
             'description' => 'Trip album',
         ]);
 
-        $photo = Photo::query()->create([
+        Photo::query()->create([
             'series_id' => $series->id,
             'path' => 'photos/mountains-1.jpg',
             'original_name' => 'mountains-1.jpg',
@@ -168,15 +168,14 @@ class SeriesApiTest extends TestCase
             'name' => 'landscape',
         ]);
 
-        $photo->tags()->attach($tag->id);
+        $series->tags()->attach($tag->id);
 
         $response = $this->getJson("/api/v1/series/{$series->id}?include_photos=1");
 
         $response->assertOk();
         $response->assertJsonPath('data.id', $series->id);
         $response->assertJsonPath('data.photos_count', 1);
-        $response->assertJsonPath('data.photos.0.id', $photo->id);
-        $response->assertJsonPath('data.photos.0.tags.0.name', 'landscape');
+        $response->assertJsonPath('data.tags.0.name', 'landscape');
     }
 
     public function test_update_changes_title_and_description(): void

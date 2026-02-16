@@ -5,13 +5,11 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\ListSeriesPhotosRequest;
 use App\Http\Requests\StoreSeriesPhotosRequest;
-use App\Http\Requests\SyncPhotoTagsRequest;
 use App\Http\Requests\UpdateSeriesPhotoRequest;
 use App\Models\Photo;
 use App\Models\Series;
-use App\Models\Tag;
+use App\Services\PhotoAutoTagger;
 use App\Services\PhotoBatchUploader;
-use Illuminate\Database\QueryException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -21,7 +19,10 @@ use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class SeriesPhotoController extends Controller
 {
-    public function __construct(private PhotoBatchUploader $photoBatchUploader) {}
+    public function __construct(
+        private PhotoBatchUploader $photoBatchUploader,
+        private PhotoAutoTagger $photoAutoTagger
+    ) {}
 
     public function index(ListSeriesPhotosRequest $request, Series $series): JsonResponse
     {
@@ -34,7 +35,6 @@ class SeriesPhotoController extends Controller
         $sortDir = $validated['sort_dir'] ?? 'desc';
 
         $photos = $series->photos()
-            ->with('tags')
             ->orderBy($sortBy, $sortDir)
             ->when($sortBy !== 'id', function ($query) use ($sortDir) {
                 $query->orderBy('id', $sortDir);
@@ -72,8 +72,6 @@ class SeriesPhotoController extends Controller
     {
         $this->ensureSeriesPhoto($series, $photo);
         $this->authorize('view', $photo);
-
-        $photo->load('tags');
 
         return response()->json([
             'data' => $photo,
@@ -140,6 +138,23 @@ class SeriesPhotoController extends Controller
         ]);
     }
 
+    public function retag(Series $series): JsonResponse
+    {
+        $this->authorize('update', $series);
+
+        ['processed' => $processed, 'failed' => $failed] = $this->rebuildSeriesTagsFromPhotos($series);
+
+        return response()->json([
+            'data' => [
+                'processed' => $processed,
+                'failed' => $failed,
+                'tags_count' => $series->tags()->count(),
+                'vision_enabled' => $this->photoAutoTagger->visionEnabled(),
+                'vision_healthy' => $this->photoAutoTagger->visionHealthy(),
+            ],
+        ]);
+    }
+
     public function update(UpdateSeriesPhotoRequest $request, Series $series, Photo $photo): JsonResponse
     {
         $this->ensureSeriesPhoto($series, $photo);
@@ -154,7 +169,7 @@ class SeriesPhotoController extends Controller
         $photo->update($data);
 
         return response()->json([
-            'data' => $photo->fresh()->load('tags'),
+            'data' => $photo->fresh(),
         ]);
     }
 
@@ -167,59 +182,9 @@ class SeriesPhotoController extends Controller
         Storage::disk($disk)->delete($photo->path);
 
         $photo->delete();
+        $this->rebuildSeriesTagsFromPhotos($series);
 
         return response()->json(status: 204);
-    }
-
-    public function syncTags(SyncPhotoTagsRequest $request, Series $series, Photo $photo): JsonResponse
-    {
-        $this->ensureSeriesPhoto($series, $photo);
-        $this->authorize('update', $photo);
-
-        $names = $this->normalizeTagNames($request->validated()['tags']);
-
-        $tags = collect($names)->map(function (string $name) {
-            return $this->findOrCreateTagSafely($name);
-        });
-
-        $photo->tags()->sync($tags->pluck('id')->all());
-        $photo->load('tags');
-
-        return response()->json([
-            'data' => $photo,
-        ]);
-    }
-
-    public function attachTags(SyncPhotoTagsRequest $request, Series $series, Photo $photo): JsonResponse
-    {
-        $this->ensureSeriesPhoto($series, $photo);
-        $this->authorize('update', $photo);
-
-        $names = $this->normalizeTagNames($request->validated()['tags']);
-
-        $tags = collect($names)->map(function (string $name) {
-            return $this->findOrCreateTagSafely($name);
-        });
-
-        $photo->tags()->syncWithoutDetaching($tags->pluck('id')->all());
-        $photo->load('tags');
-
-        return response()->json([
-            'data' => $photo,
-        ]);
-    }
-
-    public function detachTag(Series $series, Photo $photo, Tag $tag): JsonResponse
-    {
-        $this->ensureSeriesPhoto($series, $photo);
-        $this->authorize('update', $photo);
-
-        $photo->tags()->detach($tag->id);
-        $photo->load('tags');
-
-        return response()->json([
-            'data' => $photo,
-        ]);
     }
 
     private function ensureSeriesPhoto(Series $series, Photo $photo): void
@@ -227,52 +192,6 @@ class SeriesPhotoController extends Controller
         if ($photo->series_id !== $series->id) {
             abort(404);
         }
-    }
-
-    private function normalizeTagNames(array $tags): array
-    {
-        $normalize = function (string $name): string {
-            $trimmed = trim($name);
-
-            if (function_exists('mb_strtolower')) {
-                return mb_strtolower($trimmed);
-            }
-
-            return strtolower($trimmed);
-        };
-
-        return collect($tags)
-            ->map($normalize)
-            ->filter()
-            ->unique()
-            ->values()
-            ->all();
-    }
-
-    private function findOrCreateTagSafely(string $name): Tag
-    {
-        try {
-            return Tag::firstOrCreate(['name' => $name]);
-        } catch (QueryException $e) {
-            // Concurrent insert can violate unique(name). In that case
-            // read and return the row created by the other request.
-            if ($this->isUniqueViolation($e)) {
-                $tag = Tag::query()->where('name', $name)->first();
-
-                if ($tag !== null) {
-                    return $tag;
-                }
-            }
-
-            throw $e;
-        }
-    }
-
-    private function isUniqueViolation(QueryException $e): bool
-    {
-        $sqlState = $e->errorInfo[0] ?? null;
-
-        return $sqlState === '23000';
     }
 
     private function normalizeOriginalName(Photo $photo, string $input): string
@@ -316,5 +235,39 @@ class SeriesPhotoController extends Controller
         $fromPath = strtolower(pathinfo((string) $photo->path, PATHINFO_EXTENSION));
 
         return $fromPath !== '' ? $fromPath : 'jpg';
+    }
+
+    /**
+     * @return array{processed:int, failed:int}
+     */
+    private function rebuildSeriesTagsFromPhotos(Series $series): array
+    {
+        $disk = config('filesystems.default');
+        $processed = 0;
+        $failed = 0;
+        $allTagNames = [];
+
+        $series->photos()
+            ->orderBy('id')
+            ->chunkById(100, function ($photos) use ($disk, &$processed, &$failed, &$allTagNames): void {
+                foreach ($photos as $photo) {
+                    try {
+                        $allTagNames = [
+                            ...$allTagNames,
+                            ...$this->photoAutoTagger->detectTagsForPhoto($photo, $disk),
+                        ];
+                        $processed++;
+                    } catch (\Throwable) {
+                        $failed++;
+                    }
+                }
+            });
+
+        $this->photoAutoTagger->syncSeriesTags($series, $allTagNames, true);
+
+        return [
+            'processed' => $processed,
+            'failed' => $failed,
+        ];
     }
 }

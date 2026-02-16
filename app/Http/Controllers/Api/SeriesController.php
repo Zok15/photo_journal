@@ -29,6 +29,7 @@ class SeriesController extends Controller
 
         $series = Series::query()
             ->where('user_id', $request->user()->id)
+            ->with('tags')
             ->withCount('photos')
             ->latest()
             ->paginate($perPage)
@@ -89,7 +90,6 @@ class SeriesController extends Controller
 
             $series->load([
                 'photos' => fn ($query) => $query
-                    ->with('tags')
                     ->orderByRaw('sort_order IS NULL')
                     ->orderBy('sort_order')
                     ->latest()
@@ -101,7 +101,7 @@ class SeriesController extends Controller
             });
         }
 
-        $series->loadCount('photos');
+        $series->loadCount('photos')->load('tags');
 
         return response()->json([
             'data' => $series,
@@ -120,7 +120,7 @@ class SeriesController extends Controller
         $series->update($data);
 
         return response()->json([
-            'data' => $series->fresh()->loadCount('photos'),
+            'data' => $series->fresh()->loadCount('photos')->load('tags'),
         ]);
     }
 
