@@ -17,6 +17,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
+use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class SeriesPhotoController extends Controller
 {
@@ -77,6 +78,23 @@ class SeriesPhotoController extends Controller
         return response()->json([
             'data' => $photo,
         ]);
+    }
+
+    public function download(Series $series, Photo $photo): StreamedResponse
+    {
+        $this->ensureSeriesPhoto($series, $photo);
+        $this->authorize('view', $photo);
+
+        $disk = config('filesystems.default');
+        $storage = Storage::disk($disk);
+
+        abort_unless($storage->exists($photo->path), 404);
+
+        $extension = strtolower(pathinfo((string) $photo->path, PATHINFO_EXTENSION));
+        $fallback = 'photo-'.$photo->id.($extension !== '' ? '.'.$extension : '');
+        $downloadName = trim((string) $photo->original_name) !== '' ? (string) $photo->original_name : $fallback;
+
+        return $storage->download($photo->path, $downloadName);
     }
 
     public function reorder(Request $request, Series $series): JsonResponse
