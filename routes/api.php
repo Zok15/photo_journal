@@ -18,6 +18,8 @@ Route::prefix('v1')->group(function () {
 
         Route::apiResource('series', SeriesController::class)
             ->only(['index', 'store', 'show', 'update', 'destroy']);
+        Route::post('series/{series}/tags', [SeriesController::class, 'attachTags']);
+        Route::delete('series/{series}/tags/{tag}', [SeriesController::class, 'detachTag']);
 
         Route::get('series/{series}/photos', [SeriesPhotoController::class, 'index']);
         Route::post('series/{series}/photos', [SeriesPhotoController::class, 'store']);
@@ -29,6 +31,7 @@ Route::prefix('v1')->group(function () {
         Route::delete('series/{series}/photos/{photo}', [SeriesPhotoController::class, 'destroy']);
 
         Route::post('tags', [TagController::class, 'store']);
+        Route::get('tags/suggest', [TagController::class, 'suggest']);
         Route::patch('tags/{tag}', [TagController::class, 'update']);
     });
 });

@@ -203,6 +203,120 @@ class SeriesApiTest extends TestCase
         ]);
     }
 
+    public function test_attach_tags_adds_series_tags_without_duplicates_and_normalizes_names(): void
+    {
+        $series = Series::query()->create([
+            'user_id' => $this->user->id,
+            'title' => 'Tagged series',
+            'description' => 'Taggable',
+        ]);
+
+        $response = $this->postJson("/api/v1/series/{$series->id}/tags", [
+            'tags' => ['Bird', ' bird ', 'night sky', 'Ворона серая'],
+        ]);
+
+        $response->assertOk();
+        $response->assertJsonPath('data.id', $series->id);
+
+        $names = collect($response->json('data.tags'))
+            ->pluck('name')
+            ->sort()
+            ->values()
+            ->all();
+
+        $this->assertSame(['bird', 'nightSky', 'voronaSeraia'], $names);
+
+        $this->assertDatabaseHas('series_tag', [
+            'series_id' => $series->id,
+            'tag_id' => Tag::query()->where('name', 'nightSky')->firstOrFail()->id,
+        ]);
+    }
+
+    public function test_detach_tag_removes_tag_from_series(): void
+    {
+        $series = Series::query()->create([
+            'user_id' => $this->user->id,
+            'title' => 'Tagged series',
+            'description' => 'Taggable',
+        ]);
+
+        $first = Tag::query()->create(['name' => 'bird']);
+        $second = Tag::query()->create(['name' => 'nature']);
+        $series->tags()->attach([$first->id, $second->id]);
+
+        $response = $this->deleteJson("/api/v1/series/{$series->id}/tags/{$first->id}");
+
+        $response->assertOk();
+        $names = collect($response->json('data.tags'))->pluck('name')->sort()->values()->all();
+        $this->assertSame(['nature'], $names);
+
+        $this->assertDatabaseMissing('series_tag', [
+            'series_id' => $series->id,
+            'tag_id' => $first->id,
+        ]);
+    }
+
+    public function test_detach_tag_deletes_orphaned_tag_from_database(): void
+    {
+        $series = Series::query()->create([
+            'user_id' => $this->user->id,
+            'title' => 'Tagged series',
+            'description' => 'Taggable',
+        ]);
+
+        $tag = Tag::query()->create(['name' => 'rareBird']);
+        $series->tags()->attach($tag->id);
+
+        $response = $this->deleteJson("/api/v1/series/{$series->id}/tags/{$tag->id}");
+
+        $response->assertOk();
+        $this->assertDatabaseMissing('tags', [
+            'id' => $tag->id,
+        ]);
+    }
+
+    public function test_detach_tag_keeps_tag_if_used_by_another_series(): void
+    {
+        $seriesA = Series::query()->create([
+            'user_id' => $this->user->id,
+            'title' => 'A',
+            'description' => 'A',
+        ]);
+        $seriesB = Series::query()->create([
+            'user_id' => $this->user->id,
+            'title' => 'B',
+            'description' => 'B',
+        ]);
+
+        $tag = Tag::query()->create(['name' => 'sharedTag']);
+        $seriesA->tags()->attach($tag->id);
+        $seriesB->tags()->attach($tag->id);
+
+        $response = $this->deleteJson("/api/v1/series/{$seriesA->id}/tags/{$tag->id}");
+
+        $response->assertOk();
+        $this->assertDatabaseHas('tags', [
+            'id' => $tag->id,
+        ]);
+        $this->assertDatabaseHas('series_tag', [
+            'series_id' => $seriesB->id,
+            'tag_id' => $tag->id,
+        ]);
+    }
+
+    public function test_tag_suggest_returns_prefix_matches(): void
+    {
+        Tag::query()->create(['name' => 'greatCormorant']);
+        Tag::query()->create(['name' => 'greatHeron']);
+        Tag::query()->create(['name' => 'cormorant']);
+
+        $response = $this->getJson('/api/v1/tags/suggest?q=great&limit=10');
+
+        $response->assertOk();
+        $names = collect($response->json('data'))->pluck('name')->all();
+        $this->assertSame(['greatCormorant', 'greatHeron'], $names);
+    }
+
     public function test_destroy_deletes_series_and_returns_no_content(): void
     {
         $series = Series::query()->create([

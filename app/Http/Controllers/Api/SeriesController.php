@@ -6,11 +6,14 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\StoreSeriesWithPhotosRequest;
 use App\Jobs\ProcessSeries;
 use App\Models\Series;
+use App\Models\Tag;
 use App\Services\PhotoBatchUploader;
+use Illuminate\Database\QueryException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
 
 class SeriesController extends Controller
 {
@@ -144,6 +147,43 @@ class SeriesController extends Controller
         return response()->json(status: 204);
     }
 
+    public function attachTags(Request $request, Series $series): JsonResponse
+    {
+        $this->authorize('update', $series);
+
+        $data = $request->validate([
+            'tags' => ['required', 'array', 'min:1', 'max:50'],
+            'tags.*' => ['required', 'string', 'max:120'],
+        ]);
+
+        $names = $this->normalizeTagNames($data['tags']);
+        $tags = collect($names)->map(fn (string $name): Tag => $this->findOrCreateTagSafely($name));
+
+        $series->tags()->syncWithoutDetaching($tags->pluck('id')->all());
+
+        return response()->json([
+            'data' => $series->fresh()->loadCount('photos')->load('tags'),
+        ]);
+    }
+
+    public function detachTag(Series $series, Tag $tag): JsonResponse
+    {
+        $this->authorize('update', $series);
+
+        $series->tags()->detach($tag->id);
+
+        // Keep tag table compact: remove tags that are no longer referenced.
+        $stillUsedInSeries = $tag->series()->exists();
+        $stillUsedInPhotos = $tag->photos()->exists();
+        if (!$stillUsedInSeries && !$stillUsedInPhotos) {
+            $tag->delete();
+        }
+
+        return response()->json([
+            'data' => $series->fresh()->loadCount('photos')->load('tags'),
+        ]);
+    }
+
     private function resolvePhotoPreviewUrl(string $disk, ?string $path): ?string
     {
         if ($path === null || $path === '') {
@@ -156,6 +196,61 @@ class SeriesController extends Controller
             return $storage->temporaryUrl($path, Carbon::now()->addMinutes(30));
         } catch (\Throwable) {
             return $storage->url($path);
+        }
+    }
+
+    private function normalizeTagNames(array $tags): array
+    {
+        $normalize = function (string $name): string {
+            $trimmed = trim($name);
+            if ($trimmed === '') {
+                return '';
+            }
+
+            $ascii = Str::ascii($trimmed);
+            $words = preg_replace('/[^A-Za-z0-9]+/', ' ', $ascii) ?? '';
+            $camel = Str::camel(trim($words));
+
+            return $camel !== '' ? $camel : 'tag';
+        };
+
+        return collect($tags)
+            ->map($normalize)
+            ->filter()
+            ->unique()
+            ->values()
+            ->all();
+    }
+
+    private function findOrCreateTagSafely(string $name): Tag
+    {
+        try {
+            $tag = Tag::firstOrCreate(['name' => $name]);
+
+            // MySQL collations are often case-insensitive; normalize existing rows to canonical case.
+            if ($tag->name !== $name) {
+                $tag->name = $name;
+                $tag->save();
+                $tag->refresh();
+            }
+
+            return $tag;
+        } catch (QueryException $e) {
+            $sqlState = $e->errorInfo[0] ?? null;
+
+            if ($sqlState === '23000') {
+                $existing = Tag::query()->where('name', $name)->first();
+                if ($existing !== null) {
+                    if ($existing->name !== $name) {
+                        $existing->name = $name;
+                        $existing->save();
+                        $existing->refresh();
+                    }
+                    return $existing;
+                }
+            }
+
+            throw $e;
         }
     }
 

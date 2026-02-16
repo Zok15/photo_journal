@@ -72,6 +72,17 @@ class PhotoAutoTagger
     ];
 
     private const MAX_TAGS = 20;
+    private const COMPOUND_CANONICAL_MAP = [
+        'greatcormorant' => 'greatCormorant',
+        'commoncrane' => 'commonCrane',
+        'sandhillcrane' => 'sandhillCrane',
+        'greyheron' => 'greyHeron',
+        'herringgull' => 'herringGull',
+        'blackheadedgull' => 'blackHeadedGull',
+        'housesparrow' => 'houseSparrow',
+        'muteswan' => 'muteSwan',
+        'waterlily' => 'waterLily',
+    ];
 
     public function visionEnabled(): bool
     {
@@ -250,12 +261,36 @@ class PhotoAutoTagger
 
     private function normalizeTag(string $tag): string
     {
-        $normalized = Str::of($tag)
+        $collapsed = Str::of($tag)
             ->ascii()
             ->lower()
-            ->replaceMatches('/[^a-z0-9\-]+/', '-')
-            ->trim('-')
+            ->replaceMatches('/[^a-z0-9]+/', '')
             ->value();
+
+        if ($collapsed !== '' && isset(self::COMPOUND_CANONICAL_MAP[$collapsed])) {
+            return self::COMPOUND_CANONICAL_MAP[$collapsed];
+        }
+
+        $ascii = Str::of($tag)
+            ->ascii()
+            ->replaceMatches('/([a-z0-9])([A-Z])/', '$1 $2')
+            ->value();
+
+        $parts = preg_split('/[^A-Za-z0-9]+/', $ascii) ?: [];
+        $parts = array_values(array_filter($parts, fn ($part): bool => is_string($part) && $part !== ''));
+        $parts = array_map('strtolower', $parts);
+
+        if ($parts === []) {
+            return '';
+        }
+
+        $head = $parts[0];
+        $tail = array_map(
+            fn (string $part): string => ucfirst($part),
+            array_slice($parts, 1)
+        );
+
+        $normalized = $head.implode('', $tail);
 
         return strlen($normalized) >= 2 ? $normalized : '';
     }
@@ -397,13 +432,27 @@ class PhotoAutoTagger
     private function findOrCreateTagSafely(string $name): Tag
     {
         try {
-            return Tag::firstOrCreate(['name' => $name]);
+            $tag = Tag::firstOrCreate(['name' => $name]);
+
+            // MySQL collations are often case-insensitive; normalize existing rows to canonical case.
+            if ($tag->name !== $name) {
+                $tag->name = $name;
+                $tag->save();
+                $tag->refresh();
+            }
+
+            return $tag;
         } catch (QueryException $e) {
             $sqlState = $e->errorInfo[0] ?? null;
 
             if ($sqlState === '23000') {
                 $existing = Tag::query()->where('name', $name)->first();
                 if ($existing !== null) {
+                    if ($existing->name !== $name) {
+                        $existing->name = $name;
+                        $existing->save();
+                        $existing->refresh();
+                    }
                     return $existing;
                 }
             }

@@ -1,6 +1,7 @@
 from fastapi import FastAPI, File, UploadFile
 from PIL import Image
 from transformers import pipeline
+import re
 
 app = FastAPI(title="photo-journal-vision-tagger")
 
@@ -12,23 +13,46 @@ classifier = pipeline(
 
 # Stage 1: broad classes and global scene/color hints.
 BASE_LABELS = [
-    "bird", "flower", "nature", "macro", "water", "sky", "forest", "meadow", "garden",
+    "bird", "flower", "tree", "plant", "leaf", "branch",
+    "nature", "macro", "wildlife",
+    "water", "sea", "lake", "river", "wetland",
+    "sky", "cloud", "sunset", "sunrise",
+    "forest", "woodland", "meadow", "field", "garden", "park",
+    "mountain", "hill", "shore", "beach", "snow", "ice",
     "red", "orange", "yellow", "green", "blue", "purple", "pink", "white", "black", "brown",
+    "gray", "golden", "turquoise",
     "winter", "spring", "summer", "autumn",
 ]
 
 # Stage 2: species labels, only if coarse class is confident enough.
 BIRD_SPECIES_LABELS = [
-    "cormorant", "great cormorant", "crane", "common crane", "grey heron",
-    "seagull", "herring gull", "black-headed gull", "crow", "raven",
-    "jackdaw", "rook", "sparrow", "house sparrow", "swallow", "owl",
-    "duck", "mallard", "swan", "mute swan", "eagle", "kite", "hawk",
-    "pigeon", "dove", "stork",
+    # Bird families
+    "anatidae", "laridae", "ardeidae", "accipitridae", "falconidae",
+    "strigidae", "scolopacidae", "columbidae", "corvidae", "sturnidae",
+    "fringillidae", "paridae", "hirundinidae", "podicipedidae", "phalacrocoracidae",
+    "picidae", "sylviidae", "motacillidae",
+    # Species/common bird labels
+    "cormorant", "greatCormorant", "crane", "commonCrane", "sandhillCrane",
+    "heron", "greyHeron", "egret",
+    "seagull", "gull", "herringGull", "blackHeadedGull",
+    "crow", "raven", "jackdaw", "rook", "magpie",
+    "sparrow", "houseSparrow", "swallow", "swift", "starling",
+    "owl", "eagle", "kite", "hawk", "falcon", "osprey",
+    "duck", "mallard", "goose", "swan", "muteSwan", "grebe",
+    "pigeon", "dove", "stork", "pelican", "kingfisher", "woodpecker",
 ]
 
 FLOWER_SPECIES_LABELS = [
-    "flower", "rose", "tulip", "orchid", "lily", "daisy", "sunflower",
-    "crocus", "snowdrop", "peony", "dandelion", "violet", "poppy",
+    # Flower families
+    "asteraceae", "rosaceae", "liliaceae", "orchidaceae", "ranunculaceae",
+    "fabaceae", "brassicaceae", "apiaceae", "caryophyllaceae", "iridaceae",
+    "amaryllidaceae", "poaceae", "lamiaceae",
+    # Species/common flower labels
+    "flower", "wildflower",
+    "rose", "tulip", "orchid", "lily", "waterLily",
+    "daisy", "sunflower", "crocus", "snowdrop", "peony",
+    "dandelion", "violet", "poppy", "iris", "lavender",
+    "chamomile", "bellflower", "anemone", "lotus",
 ]
 
 MIN_SCORE_BASE = 0.22
@@ -38,8 +62,37 @@ FLOWER_GATE = 0.27
 MAX_TAGS = 10
 
 
+def to_camel(label: str) -> str:
+    value = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", str(label).strip())
+    words = [part.lower() for part in re.split(r"[^A-Za-z0-9]+", value) if part]
+    if not words:
+        return ""
+
+    return words[0] + "".join(w[:1].upper() + w[1:] for w in words[1:])
+
+
+def build_tag_alias_map() -> dict:
+    aliases = {}
+    all_labels = [*BASE_LABELS, *BIRD_SPECIES_LABELS, *FLOWER_SPECIES_LABELS]
+
+    for label in all_labels:
+        key = re.sub(r"[^A-Za-z0-9]+", "", str(label)).lower()
+        canonical = to_camel(label)
+        if key and canonical:
+            aliases[key] = canonical
+
+    return aliases
+
+
+TAG_ALIAS_MAP = build_tag_alias_map()
+
+
 def normalize_tag(label: str) -> str:
-    return str(label).strip().lower().replace(" ", "-")
+    collapsed = re.sub(r"[^A-Za-z0-9]+", "", str(label)).lower()
+    if collapsed in TAG_ALIAS_MAP:
+        return TAG_ALIAS_MAP[collapsed]
+
+    return to_camel(label)
 
 
 def extract_items(result):
