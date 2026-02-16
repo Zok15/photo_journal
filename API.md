@@ -4,6 +4,12 @@ Base URL: `/api/v1`
 Authentication: Bearer token via Laravel Sanctum.  
 Response format: JSON.
 
+## Frontend workspace
+
+- SPA project path: `/home/esalnikova/projects/photo_journal_frontend`
+- Frontend env var for API: `VITE_API_BASE_URL=http://127.0.0.1:8091/api/v1`
+- Local token storage key (current scaffold): `pj_token`
+
 ## Contract status
 
 - Version: `v1`
