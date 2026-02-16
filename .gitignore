@@ -22,3 +22,14 @@
 Homestead.json
 Homestead.yaml
 Thumbs.db
+
+# Local vision tagger artifacts
+/tools/vision_tagger/.venv/
+/tools/vision_tagger/__pycache__/
+/tools/vision_tagger/.cache/
+/tools/vision_tagger/models/
+/tools/vision_tagger/model/
+/tools/vision_tagger/**/*.safetensors
+/tools/vision_tagger/**/*.bin
+/tools/vision_tagger/**/*.pt
+/tools/vision_tagger/**/*.onnx

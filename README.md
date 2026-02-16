@@ -140,6 +140,29 @@ $ php artisan outbox:poll
 
 ---
 
+## Local vision tags (free)
+
+Для распознавания содержимого изображения (птицы, цветы, палитра, сезон) можно включить локальный сервис на базе CLIP:
+
+1. Установить зависимости Python:
+- `cd tools/vision_tagger`
+- `python3 -m venv .venv`
+- `source .venv/bin/activate`
+- `pip install -r requirements.txt`
+
+2. Запустить сервис:
+- `uvicorn app:app --host 127.0.0.1 --port 8010`
+
+3. Включить его в Laravel (`.env`):
+- `VISION_TAGGER_ENABLED=true`
+- `VISION_TAGGER_URL=http://127.0.0.1:8010/tag`
+- `VISION_TAGGER_TIMEOUT=20`
+- `VISION_TAGGER_MAX_TAGS=8`
+
+После этого автотеги при загрузке и кнопка "Обновить теги" на странице серии будут использовать распознавание по содержимому файла.
+
+---
+
 ## Roadmap
 
 - Preview generation & EXIF parsing in jobs  
