@@ -90,6 +90,8 @@ class SeriesController extends Controller
             $series->load([
                 'photos' => fn ($query) => $query
                     ->with('tags')
+                    ->orderByRaw('sort_order IS NULL')
+                    ->orderBy('sort_order')
                     ->latest()
                     ->limit($limit),
             ]);

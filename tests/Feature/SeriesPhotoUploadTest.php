@@ -233,6 +233,75 @@ class SeriesPhotoUploadTest extends TestCase
         $this->assertStringNotContainsString(' ', $normalized);
     }
 
+    public function test_reorder_updates_photo_sort_order(): void
+    {
+        $series = Series::query()->create([
+            'user_id' => $this->user->id,
+            'title' => 'Reorder',
+            'description' => 'Manual order',
+        ]);
+
+        $first = $series->photos()->create([
+            'path' => 'photos/series/'.$series->id.'/1.jpg',
+            'original_name' => '1.jpg',
+        ]);
+        $second = $series->photos()->create([
+            'path' => 'photos/series/'.$series->id.'/2.jpg',
+            'original_name' => '2.jpg',
+        ]);
+        $third = $series->photos()->create([
+            'path' => 'photos/series/'.$series->id.'/3.jpg',
+            'original_name' => '3.jpg',
+        ]);
+
+        $response = $this->patchJson("/api/v1/series/{$series->id}/photos/reorder", [
+            'photo_ids' => [$second->id, $third->id, $first->id],
+        ]);
+
+        $response->assertOk();
+        $response->assertJsonPath('data.photo_ids.0', $second->id);
+        $response->assertJsonPath('data.photo_ids.1', $third->id);
+        $response->assertJsonPath('data.photo_ids.2', $first->id);
+
+        $this->assertDatabaseHas('photos', [
+            'id' => $second->id,
+            'sort_order' => 1,
+        ]);
+        $this->assertDatabaseHas('photos', [
+            'id' => $third->id,
+            'sort_order' => 2,
+        ]);
+        $this->assertDatabaseHas('photos', [
+            'id' => $first->id,
+            'sort_order' => 3,
+        ]);
+    }
+
+    public function test_reorder_rejects_payload_without_all_series_photo_ids(): void
+    {
+        $series = Series::query()->create([
+            'user_id' => $this->user->id,
+            'title' => 'Reorder',
+            'description' => 'Validation',
+        ]);
+
+        $first = $series->photos()->create([
+            'path' => 'photos/series/'.$series->id.'/1.jpg',
+            'original_name' => '1.jpg',
+        ]);
+        $series->photos()->create([
+            'path' => 'photos/series/'.$series->id.'/2.jpg',
+            'original_name' => '2.jpg',
+        ]);
+
+        $response = $this->patchJson("/api/v1/series/{$series->id}/photos/reorder", [
+            'photo_ids' => [$first->id],
+        ]);
+
+        $response->assertUnprocessable();
+        $response->assertJsonPath('message', 'photo_ids must contain all photos of the series exactly once.');
+    }
+
     public function test_destroy_deletes_photo_and_file(): void
     {
         config()->set('filesystems.default', 'local');

@@ -21,6 +21,7 @@ Route::prefix('v1')->group(function () {
 
         Route::get('series/{series}/photos', [SeriesPhotoController::class, 'index']);
         Route::post('series/{series}/photos', [SeriesPhotoController::class, 'store']);
+        Route::patch('series/{series}/photos/reorder', [SeriesPhotoController::class, 'reorder']);
         Route::get('series/{series}/photos/{photo}', [SeriesPhotoController::class, 'show']);
         Route::patch('series/{series}/photos/{photo}', [SeriesPhotoController::class, 'update']);
         Route::delete('series/{series}/photos/{photo}', [SeriesPhotoController::class, 'destroy']);

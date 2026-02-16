@@ -227,6 +227,7 @@ Response:
 - always returns `data` with series fields and `photos_count`
 - includes `photos` (with nested `tags`) only when `include_photos=true`
 - each photo in `photos` may include `preview_url` (temporary/signed URL for image preview in frontend)
+- when `include_photos=true`, photos are returned in manual order (`sort_order`) if set; otherwise newest first
 
 ### `PATCH /series/{series}`
 
@@ -294,6 +295,24 @@ Fields:
   - if base name contains characters outside `A-Za-z0-9`, it is transliterated to ASCII and normalized to camelCase
 
 Response: updated photo in `data`.
+
+### `PATCH /series/{series}/photos/reorder`
+
+Reorder all photos in a series.
+
+Fields:
+- `photo_ids` (required array of integers)
+- must contain all photos of the target series exactly once
+
+Response `200`:
+
+```json
+{
+  "data": {
+    "photo_ids": [12, 19, 15]
+  }
+}
+```
 
 ### `DELETE /series/{series}/photos/{photo}`
 

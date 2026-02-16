@@ -13,6 +13,8 @@ use App\Models\Tag;
 use App\Services\PhotoBatchUploader;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 
@@ -74,6 +76,49 @@ class SeriesPhotoController extends Controller
 
         return response()->json([
             'data' => $photo,
+        ]);
+    }
+
+    public function reorder(Request $request, Series $series): JsonResponse
+    {
+        $this->authorize('update', $series);
+
+        $data = $request->validate([
+            'photo_ids' => ['required', 'array', 'min:1'],
+            'photo_ids.*' => ['required', 'integer', 'distinct', 'exists:photos,id'],
+        ]);
+
+        $photoIds = array_map('intval', $data['photo_ids']);
+
+        $seriesPhotoIds = $series->photos()
+            ->pluck('id')
+            ->map(fn ($id) => (int) $id)
+            ->all();
+
+        sort($photoIds);
+        $normalizedSeriesPhotoIds = $seriesPhotoIds;
+        sort($normalizedSeriesPhotoIds);
+
+        if ($photoIds !== $normalizedSeriesPhotoIds) {
+            return response()->json([
+                'message' => 'photo_ids must contain all photos of the series exactly once.',
+            ], 422);
+        }
+
+        DB::transaction(function () use ($series, $data): void {
+            foreach ($data['photo_ids'] as $index => $photoId) {
+                $series->photos()
+                    ->whereKey($photoId)
+                    ->update([
+                        'sort_order' => $index + 1,
+                    ]);
+            }
+        });
+
+        return response()->json([
+            'data' => [
+                'photo_ids' => $data['photo_ids'],
+            ],
         ]);
     }
 
