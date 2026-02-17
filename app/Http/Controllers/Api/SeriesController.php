@@ -280,9 +280,19 @@ class SeriesController extends Controller
         ]);
 
         $names = $this->normalizeTagNames($data['tags']);
+        if ($names === []) {
+            return response()->json([
+                'message' => 'At least one valid tag is required.',
+            ], 422);
+        }
+
         $tags = collect($names)->map(fn (string $name): Tag => $this->findOrCreateTagSafely($name));
 
-        $series->tags()->syncWithoutDetaching($tags->pluck('id')->all());
+        $changes = $series->tags()->syncWithoutDetaching($tags->pluck('id')->all());
+        if (! empty($changes['attached'] ?? []) || ! empty($changes['detached'] ?? []) || ! empty($changes['updated'] ?? [])) {
+            $this->touchSeriesForCache($series);
+        }
+
         $this->invalidateSeriesCaches((int) $series->user_id, $series);
 
         return response()->json([
@@ -294,7 +304,10 @@ class SeriesController extends Controller
     {
         $this->authorize('update', $series);
 
-        $series->tags()->detach($tag->id);
+        $detached = $series->tags()->detach($tag->id);
+        if ($detached > 0) {
+            $this->touchSeriesForCache($series);
+        }
 
         // Keep tag table compact: remove tags that are no longer referenced.
         $stillUsedInSeries = $tag->series()->exists();
@@ -567,5 +580,13 @@ class SeriesController extends Controller
     {
         SeriesResponseCache::bumpUser($userId);
         SeriesResponseCache::bumpSeries((int) $series->id);
+    }
+
+    private function touchSeriesForCache(Series $series): void
+    {
+        // If-Modified-Since is second-precision. Bump timestamp by 1s to avoid false 304 in same second.
+        $series->forceFill([
+            'updated_at' => now()->addSecond(),
+        ])->saveQuietly();
     }
 }

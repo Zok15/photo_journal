@@ -128,13 +128,38 @@ class PhotoAutoTagger
             ->all();
 
         if ($replace) {
-            $series->tags()->sync($ids);
+            $changes = $series->tags()->sync($ids);
+            if ($this->hasSyncChanges($changes)) {
+                $this->touchSeriesForCache($series);
+            }
+
             return;
         }
 
         if ($ids !== []) {
-            $series->tags()->syncWithoutDetaching($ids);
+            $changes = $series->tags()->syncWithoutDetaching($ids);
+            if ($this->hasSyncChanges($changes)) {
+                $this->touchSeriesForCache($series);
+            }
         }
+    }
+
+    /**
+     * @param array{attached?:array,detached?:array,updated?:array} $changes
+     */
+    private function hasSyncChanges(array $changes): bool
+    {
+        return ! empty($changes['attached'] ?? [])
+            || ! empty($changes['detached'] ?? [])
+            || ! empty($changes['updated'] ?? []);
+    }
+
+    private function touchSeriesForCache(Series $series): void
+    {
+        // If-Modified-Since is second-precision. Bump timestamp by 1s to avoid false 304 in same second.
+        $series->forceFill([
+            'updated_at' => now()->addSecond(),
+        ])->saveQuietly();
     }
 
     /**

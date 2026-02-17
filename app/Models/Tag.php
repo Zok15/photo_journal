@@ -30,7 +30,7 @@ class Tag extends Model
         $words = array_map('strtolower', $words);
 
         if ($words === []) {
-            return 'tag';
+            return '';
         }
 
         $head = array_shift($words);

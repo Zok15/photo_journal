@@ -609,6 +609,50 @@ class SeriesApiTest extends TestCase
         ]);
     }
 
+    public function test_attach_tags_rejects_payload_without_valid_tag_names(): void
+    {
+        $series = Series::query()->create([
+            'user_id' => $this->user->id,
+            'title' => 'Tagged series',
+            'description' => 'Taggable',
+        ]);
+
+        $response = $this->postJson("/api/v1/series/{$series->id}/tags", [
+            'tags' => ['!!!', '@@@'],
+        ]);
+
+        $response->assertStatus(422);
+        $response->assertJsonPath('message', 'At least one valid tag is required.');
+        $this->assertDatabaseCount('tags', 0);
+    }
+
+    public function test_show_does_not_return_304_after_series_tags_attach(): void
+    {
+        $series = Series::query()->create([
+            'user_id' => $this->user->id,
+            'title' => 'Cache check',
+            'description' => 'Tag timestamp',
+        ]);
+
+        $first = $this->getJson("/api/v1/series/{$series->id}");
+        $first->assertOk();
+
+        $ifModifiedSince = (string) $first->headers->get('Last-Modified');
+        $this->assertNotSame('', $ifModifiedSince);
+
+        $this->postJson("/api/v1/series/{$series->id}/tags", [
+            'tags' => ['newTag'],
+        ])->assertOk();
+
+        $second = $this
+            ->withHeader('If-Modified-Since', $ifModifiedSince)
+            ->getJson("/api/v1/series/{$series->id}");
+
+        $second->assertOk();
+        $names = collect($second->json('data.tags'))->pluck('name')->all();
+        $this->assertContains('newTag', $names);
+    }
+
     public function test_detach_tag_removes_tag_from_series(): void
     {
         $series = Series::query()->create([
