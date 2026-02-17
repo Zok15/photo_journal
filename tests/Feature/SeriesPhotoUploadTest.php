@@ -510,6 +510,43 @@ class SeriesPhotoUploadTest extends TestCase
         Storage::disk('local')->assertMissing($photo->path);
     }
 
+    public function test_series_index_does_not_return_304_after_photo_delete(): void
+    {
+        config()->set('filesystems.default', 'local');
+        Storage::fake('local');
+
+        $series = Series::query()->create([
+            'user_id' => $this->user->id,
+            'title' => 'Delete cache',
+            'description' => 'Cache revalidation',
+        ]);
+
+        $photo = $series->photos()->create([
+            'path' => 'photos/series/'.$series->id.'/cache-delete.jpg',
+            'original_name' => 'cache-delete.jpg',
+        ]);
+
+        Storage::disk('local')->put($photo->path, 'content');
+
+        $first = $this->getJson('/api/v1/series');
+        $first->assertOk();
+
+        $ifModifiedSince = (string) $first->headers->get('Last-Modified');
+        $this->assertNotSame('', $ifModifiedSince);
+
+        $this->deleteJson("/api/v1/series/{$series->id}/photos/{$photo->id}")
+            ->assertNoContent();
+
+        $second = $this
+            ->withHeader('If-Modified-Since', $ifModifiedSince)
+            ->getJson('/api/v1/series');
+
+        $second->assertOk();
+        $photosCount = collect($second->json('data'))
+            ->firstWhere('id', $series->id)['photos_count'] ?? null;
+        $this->assertSame(0, $photosCount);
+    }
+
     public function test_photo_must_belong_to_series(): void
     {
         $series = Series::query()->create([

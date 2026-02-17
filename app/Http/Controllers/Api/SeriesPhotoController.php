@@ -189,7 +189,11 @@ class SeriesPhotoController extends Controller
         Storage::disk($disk)->delete($photo->path);
 
         $photo->delete();
-        $this->rebuildSeriesTagsFromPhotos($series);
+        $this->touchSeriesForCache($series);
+        if (! $series->photos()->exists()) {
+            $series->tags()->detach();
+        }
+
         $this->invalidateSeriesCaches($series);
 
         return response()->json(status: 204);
@@ -284,4 +288,13 @@ class SeriesPhotoController extends Controller
         SeriesResponseCache::bumpUser((int) $series->user_id);
         SeriesResponseCache::bumpSeries((int) $series->id);
     }
+
+    private function touchSeriesForCache(Series $series): void
+    {
+        // If-Modified-Since is second-precision; bump timestamp to avoid false 304.
+        $series->forceFill([
+            'updated_at' => now()->addSecond(),
+        ])->saveQuietly();
+    }
+
 }
