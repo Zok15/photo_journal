@@ -178,6 +178,48 @@ class SeriesApiTest extends TestCase
         $response->assertJsonPath('data.tags.0.name', 'landscape');
     }
 
+    public function test_index_returns_304_when_if_none_match_matches(): void
+    {
+        Series::query()->create([
+            'user_id' => $this->user->id,
+            'title' => 'Cached list',
+            'description' => 'etag',
+        ]);
+
+        $first = $this->getJson('/api/v1/series');
+        $first->assertOk();
+        $etag = (string) $first->headers->get('ETag');
+        $this->assertNotSame('', $etag);
+
+        $second = $this
+            ->withHeader('If-None-Match', $etag)
+            ->get('/api/v1/series', ['Accept' => 'application/json']);
+
+        $second->assertStatus(304);
+        $this->assertSame('', (string) $second->getContent());
+    }
+
+    public function test_show_returns_304_when_if_none_match_matches(): void
+    {
+        $series = Series::query()->create([
+            'user_id' => $this->user->id,
+            'title' => 'Cached show',
+            'description' => 'etag',
+        ]);
+
+        $first = $this->getJson("/api/v1/series/{$series->id}");
+        $first->assertOk();
+        $etag = (string) $first->headers->get('ETag');
+        $this->assertNotSame('', $etag);
+
+        $second = $this
+            ->withHeader('If-None-Match', $etag)
+            ->get("/api/v1/series/{$series->id}", ['Accept' => 'application/json']);
+
+        $second->assertStatus(304);
+        $this->assertSame('', (string) $second->getContent());
+    }
+
     public function test_update_changes_title_and_description(): void
     {
         $series = Series::query()->create([

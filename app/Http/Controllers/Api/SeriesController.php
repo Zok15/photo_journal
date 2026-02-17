@@ -12,6 +12,7 @@ use Illuminate\Database\QueryException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Storage;
 
 class SeriesController extends Controller
@@ -80,9 +81,11 @@ class SeriesController extends Controller
             $query->latest();
         }
 
-        $series = $query->paginate($perPage)->withQueryString();
+        $cacheKey = $this->buildSeriesIndexCacheKey($request, $validated, $perPage);
+        $cacheTtl = now()->addSeconds($this->responseCacheTtlSeconds());
+        $payload = Cache::remember($cacheKey, $cacheTtl, static fn () => $query->paginate($perPage)->withQueryString()->toArray());
 
-        return response()->json($series);
+        return $this->respondWithConditionalJson($request, $payload);
     }
 
     public function store(StoreSeriesWithPhotosRequest $request): JsonResponse
@@ -150,9 +153,15 @@ class SeriesController extends Controller
 
         $series->loadCount('photos')->load('tags');
 
-        return response()->json([
-            'data' => $series,
-        ]);
+        $payload = [
+            'data' => $series->toArray(),
+        ];
+
+        $cacheKey = $this->buildSeriesShowCacheKey($request, $series, $validated);
+        $cacheTtl = now()->addSeconds($this->responseCacheTtlSeconds());
+        $payload = Cache::remember($cacheKey, $cacheTtl, static fn () => $payload);
+
+        return $this->respondWithConditionalJson($request, $payload);
     }
 
     public function update(Request $request, Series $series): JsonResponse
@@ -284,5 +293,76 @@ class SeriesController extends Controller
 
             throw $e;
         }
+    }
+
+    private function responseCacheTtlSeconds(): int
+    {
+        return max(5, (int) config('app.series_response_cache_ttl_seconds', 20));
+    }
+
+    private function buildSeriesIndexCacheKey(Request $request, array $validated, int $perPage): string
+    {
+        $normalized = $validated;
+        $normalized['per_page'] = $perPage;
+        ksort($normalized);
+
+        return 'series:index:user:'.$request->user()->id.':'.sha1(json_encode($normalized, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+    }
+
+    private function buildSeriesShowCacheKey(Request $request, Series $series, array $validated): string
+    {
+        $normalized = [
+            'include_photos' => (bool) ($validated['include_photos'] ?? false),
+            'photos_limit' => (int) ($validated['photos_limit'] ?? 30),
+            'series_updated_at' => optional($series->updated_at)?->toAtomString(),
+        ];
+        ksort($normalized);
+
+        return 'series:show:user:'.$request->user()->id.':series:'.$series->id.':'.sha1(json_encode($normalized, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+    }
+
+    private function respondWithConditionalJson(Request $request, array $payload): JsonResponse
+    {
+        $etagHash = sha1(json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+        if ($this->ifNoneMatchMatches($request, $etagHash)) {
+            return response()
+                ->json([], 304)
+                ->setEtag($etagHash)
+                ->header('Cache-Control', $this->cacheControlHeaderValue())
+                ->header('Vary', 'Authorization, Accept');
+        }
+
+        return response()
+            ->json($payload)
+            ->setEtag($etagHash)
+            ->header('Cache-Control', $this->cacheControlHeaderValue())
+            ->header('Vary', 'Authorization, Accept');
+    }
+
+    private function ifNoneMatchMatches(Request $request, string $etagHash): bool
+    {
+        $header = trim((string) $request->header('If-None-Match', ''));
+        if ($header === '') {
+            return false;
+        }
+
+        if ($header === '*') {
+            return true;
+        }
+
+        $quotedEtag = '"'.$etagHash.'"';
+        $weakQuotedEtag = 'W/'.$quotedEtag;
+
+        return collect(explode(',', $header))
+            ->map(static fn (string $value): string => trim($value))
+            ->contains(static fn (string $value): bool => in_array($value, [$quotedEtag, $weakQuotedEtag], true));
+    }
+
+    private function cacheControlHeaderValue(): string
+    {
+        $ttl = $this->responseCacheTtlSeconds();
+        $swr = $ttl * 2;
+
+        return "private, max-age={$ttl}, stale-while-revalidate={$swr}";
     }
 }

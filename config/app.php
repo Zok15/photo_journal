@@ -123,4 +123,6 @@ return [
         'store' => env('APP_MAINTENANCE_STORE', 'database'),
     ],
 
+    'series_response_cache_ttl_seconds' => (int) env('SERIES_RESPONSE_CACHE_TTL_SECONDS', 20),
+
 ];
