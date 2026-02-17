@@ -15,7 +15,6 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 
@@ -85,39 +84,23 @@ class SeriesController extends Controller
             $query->latest();
         }
 
-        $cacheKey = $this->buildSeriesIndexCacheKey($request, $validated, $perPage);
-        $payload = $this->cachedPayload($cacheKey, function () use ($query, $perPage): array {
-            $paginator = $query->paginate($perPage)->withQueryString();
-            $collection = $paginator->getCollection();
-            $previewMap = $this->buildSeriesPreviewMap($collection);
+        $paginator = $query->paginate($perPage)->withQueryString();
+        $collection = $paginator->getCollection();
+        $previewMap = $this->buildSeriesPreviewMap($collection);
 
-            $paginator->setCollection($collection->map(function (Series $series) use ($previewMap): array {
-                $data = $series->toArray();
-                $data['preview_photos'] = $previewMap[(int) $series->id] ?? [];
+        $paginator->setCollection($collection->map(function (Series $series) use ($previewMap): array {
+            $data = $series->toArray();
+            $data['preview_photos'] = $previewMap[(int) $series->id] ?? [];
 
-                return $data;
-            }));
+            return $data;
+        }));
 
-            return $paginator->toArray();
-        }, 'series.index');
+        $payload = $paginator->toArray();
 
-        $userId = (int) $request->user()->id;
-        $seriesTable = (new Series)->getTable();
-
-        $lastModified = $this->latestTimestamp(
-            (clone $query)->max($seriesTable.'.updated_at'),
-            DB::table('photos')
-                ->join($seriesTable, $seriesTable.'.id', '=', 'photos.series_id')
-                ->where($seriesTable.'.user_id', $userId)
-                ->max('photos.updated_at'),
-            DB::table('series_tag')
-                ->join($seriesTable, $seriesTable.'.id', '=', 'series_tag.series_id')
-                ->join('tags', 'tags.id', '=', 'series_tag.tag_id')
-                ->where($seriesTable.'.user_id', $userId)
-                ->max('tags.updated_at'),
-        );
-
-        return $this->respondWithConditionalJson($request, $payload, $lastModified);
+        return response()
+            ->json($payload)
+            ->header('Cache-Control', 'private, no-store')
+            ->header('Vary', 'Authorization, Accept');
     }
 
     public function store(StoreSeriesWithPhotosRequest $request): JsonResponse
@@ -401,15 +384,6 @@ class SeriesController extends Controller
     private function responseCacheTtlSeconds(): int
     {
         return max(5, (int) config('app.series_response_cache_ttl_seconds', 20));
-    }
-
-    private function buildSeriesIndexCacheKey(Request $request, array $validated, int $perPage): string
-    {
-        $normalized = $validated;
-        $normalized['per_page'] = $perPage;
-        $normalized['page'] = (int) ($validated['page'] ?? 1);
-
-        return SeriesResponseCache::indexKey((int) $request->user()->id, $normalized);
     }
 
     private function buildSeriesShowCacheKey(Request $request, Series $series, array $validated): string

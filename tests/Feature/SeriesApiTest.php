@@ -224,7 +224,7 @@ class SeriesApiTest extends TestCase
         $this->assertStringContainsString('no-store', $cacheControl);
     }
 
-    public function test_index_returns_304_when_if_none_match_matches(): void
+    public function test_index_disables_http_caching(): void
     {
         Series::query()->create([
             'user_id' => $this->user->id,
@@ -232,17 +232,10 @@ class SeriesApiTest extends TestCase
             'description' => 'etag',
         ]);
 
-        $first = $this->getJson('/api/v1/series');
-        $first->assertOk();
-        $etag = (string) $first->headers->get('ETag');
-        $this->assertNotSame('', $etag);
-
-        $second = $this
-            ->withHeader('If-None-Match', $etag)
-            ->get('/api/v1/series', ['Accept' => 'application/json']);
-
-        $second->assertStatus(304);
-        $this->assertSame('', (string) $second->getContent());
+        $response = $this->getJson('/api/v1/series');
+        $response->assertOk();
+        $cacheControl = (string) $response->headers->get('Cache-Control');
+        $this->assertStringContainsString('no-store', $cacheControl);
     }
 
     public function test_show_returns_304_when_if_none_match_matches(): void
@@ -266,7 +259,7 @@ class SeriesApiTest extends TestCase
         $this->assertSame('', (string) $second->getContent());
     }
 
-    public function test_index_etag_changes_after_series_update(): void
+    public function test_index_reflects_series_update_immediately(): void
     {
         $series = Series::query()->create([
             'user_id' => $this->user->id,
@@ -276,8 +269,8 @@ class SeriesApiTest extends TestCase
 
         $first = $this->getJson('/api/v1/series');
         $first->assertOk();
-        $etagBefore = (string) $first->headers->get('ETag');
-        $this->assertNotSame('', $etagBefore);
+        $titleBefore = collect($first->json('data'))->firstWhere('id', $series->id)['title'] ?? null;
+        $this->assertSame('Before etag', $titleBefore);
 
         $this->patchJson("/api/v1/series/{$series->id}", [
             'title' => 'After etag',
@@ -285,9 +278,8 @@ class SeriesApiTest extends TestCase
 
         $second = $this->getJson('/api/v1/series');
         $second->assertOk();
-        $etagAfter = (string) $second->headers->get('ETag');
-        $this->assertNotSame('', $etagAfter);
-        $this->assertNotSame($etagBefore, $etagAfter);
+        $titleAfter = collect($second->json('data'))->firstWhere('id', $series->id)['title'] ?? null;
+        $this->assertSame('After etag', $titleAfter);
     }
 
     public function test_show_returns_304_for_if_modified_since(): void
@@ -341,7 +333,7 @@ class SeriesApiTest extends TestCase
         $second->assertOk();
     }
 
-    public function test_index_etag_changes_after_tag_attach(): void
+    public function test_index_reflects_tag_attach_immediately(): void
     {
         $series = Series::query()->create([
             'user_id' => $this->user->id,
@@ -351,8 +343,9 @@ class SeriesApiTest extends TestCase
 
         $first = $this->getJson('/api/v1/series');
         $first->assertOk();
-        $etagBefore = (string) $first->headers->get('ETag');
-        $this->assertNotSame('', $etagBefore);
+        $tagsBefore = collect($first->json('data'))
+            ->firstWhere('id', $series->id)['tags'] ?? [];
+        $this->assertCount(0, $tagsBefore);
 
         $this->postJson("/api/v1/series/{$series->id}/tags", [
             'tags' => ['newTag'],
@@ -360,10 +353,10 @@ class SeriesApiTest extends TestCase
 
         $second = $this->getJson('/api/v1/series');
         $second->assertOk();
-        $etagAfter = (string) $second->headers->get('ETag');
-
-        $this->assertNotSame('', $etagAfter);
-        $this->assertNotSame($etagBefore, $etagAfter);
+        $tagsAfter = collect($second->json('data'))
+            ->firstWhere('id', $series->id)['tags'] ?? [];
+        $tagNames = collect($tagsAfter)->pluck('name')->all();
+        $this->assertContains('newTag', $tagNames);
     }
 
     public function test_update_changes_title_and_description(): void

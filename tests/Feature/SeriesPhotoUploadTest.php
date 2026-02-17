@@ -441,6 +441,48 @@ class SeriesPhotoUploadTest extends TestCase
         $response->assertJsonPath('message', 'photo_ids must contain all photos of the series exactly once.');
     }
 
+    public function test_reorder_updates_preview_order_in_series_index_response(): void
+    {
+        $series = Series::query()->create([
+            'user_id' => $this->user->id,
+            'title' => 'Reorder preview',
+            'description' => 'Index preview order',
+        ]);
+
+        $first = $series->photos()->create([
+            'path' => 'photos/series/'.$series->id.'/1.jpg',
+            'original_name' => '1.jpg',
+        ]);
+        $second = $series->photos()->create([
+            'path' => 'photos/series/'.$series->id.'/2.jpg',
+            'original_name' => '2.jpg',
+        ]);
+        $third = $series->photos()->create([
+            'path' => 'photos/series/'.$series->id.'/3.jpg',
+            'original_name' => '3.jpg',
+        ]);
+
+        $reorder = [$third->id, $first->id, $second->id];
+
+        $patch = $this->patchJson("/api/v1/series/{$series->id}/photos/reorder", [
+            'photo_ids' => $reorder,
+        ]);
+        $patch->assertOk();
+
+        $index = $this->getJson('/api/v1/series');
+        $index->assertOk();
+
+        $previewIds = collect($index->json('data'))
+            ->firstWhere('id', $series->id)['preview_photos'] ?? [];
+        $previewIds = collect($previewIds)
+            ->pluck('id')
+            ->take(3)
+            ->values()
+            ->all();
+
+        $this->assertSame($reorder, $previewIds);
+    }
+
     public function test_destroy_deletes_photo_and_file(): void
     {
         config()->set('filesystems.default', 'local');
