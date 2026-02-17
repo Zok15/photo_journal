@@ -15,6 +15,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 
@@ -97,10 +98,23 @@ class SeriesController extends Controller
 
         $payload = $paginator->toArray();
 
-        return response()
-            ->json($payload)
-            ->header('Cache-Control', 'private, no-store')
-            ->header('Vary', 'Authorization, Accept');
+        $userId = (int) $request->user()->id;
+        $seriesTable = (new Series)->getTable();
+
+        $lastModified = $this->latestTimestamp(
+            (clone $query)->max($seriesTable.'.updated_at'),
+            DB::table('photos')
+                ->join($seriesTable, $seriesTable.'.id', '=', 'photos.series_id')
+                ->where($seriesTable.'.user_id', $userId)
+                ->max('photos.updated_at'),
+            DB::table('series_tag')
+                ->join($seriesTable, $seriesTable.'.id', '=', 'series_tag.series_id')
+                ->join('tags', 'tags.id', '=', 'series_tag.tag_id')
+                ->where($seriesTable.'.user_id', $userId)
+                ->max('tags.updated_at'),
+        );
+
+        return $this->respondWithConditionalJson($request, $payload, $lastModified);
     }
 
     public function store(StoreSeriesWithPhotosRequest $request): JsonResponse
@@ -460,10 +474,7 @@ class SeriesController extends Controller
 
     private function cacheControlHeaderValue(): string
     {
-        $ttl = $this->responseCacheTtlSeconds();
-        $swr = $ttl * 2;
-
-        return "private, max-age={$ttl}, stale-while-revalidate={$swr}";
+        return 'private, no-cache, max-age=0, must-revalidate';
     }
 
     private function ifModifiedSinceNotChanged(Request $request, Carbon $lastModified): bool

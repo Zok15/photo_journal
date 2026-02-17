@@ -224,7 +224,7 @@ class SeriesApiTest extends TestCase
         $this->assertStringContainsString('no-store', $cacheControl);
     }
 
-    public function test_index_disables_http_caching(): void
+    public function test_index_uses_revalidation_cache_headers(): void
     {
         Series::query()->create([
             'user_id' => $this->user->id,
@@ -232,10 +232,22 @@ class SeriesApiTest extends TestCase
             'description' => 'etag',
         ]);
 
-        $response = $this->getJson('/api/v1/series');
-        $response->assertOk();
-        $cacheControl = (string) $response->headers->get('Cache-Control');
-        $this->assertStringContainsString('no-store', $cacheControl);
+        $first = $this->getJson('/api/v1/series');
+        $first->assertOk();
+
+        $etag = (string) $first->headers->get('ETag');
+        $this->assertNotSame('', $etag);
+
+        $cacheControl = (string) $first->headers->get('Cache-Control');
+        $this->assertStringContainsString('no-cache', $cacheControl);
+        $this->assertStringContainsString('must-revalidate', $cacheControl);
+
+        $second = $this
+            ->withHeader('If-None-Match', $etag)
+            ->get('/api/v1/series', ['Accept' => 'application/json']);
+
+        $second->assertStatus(304);
+        $this->assertSame('', (string) $second->getContent());
     }
 
     public function test_show_returns_304_when_if_none_match_matches(): void
