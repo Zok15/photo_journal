@@ -26,9 +26,9 @@ class TagApiTest extends TestCase
         ]);
 
         $response->assertCreated();
-        $response->assertJsonPath('data.name', 'night city');
+        $response->assertJsonPath('data.name', 'nightCity');
         $this->assertDatabaseHas('tags', [
-            'name' => 'night city',
+            'name' => 'nightCity',
         ]);
     }
 
@@ -41,37 +41,61 @@ class TagApiTest extends TestCase
         $response->assertStatus(422);
     }
 
-    public function test_update_changes_tag_name_with_validation_rules(): void
+    public function test_update_endpoint_is_not_available_for_users(): void
     {
         $tag = Tag::query()->create([
-            'name' => 'old name',
+            'name' => 'oldTag',
         ]);
 
         $response = $this->patchJson("/api/v1/tags/{$tag->id}", [
             'name' => '  New   Name ',
         ]);
 
-        $response->assertOk();
-        $response->assertJsonPath('data.name', 'new name');
+        $response->assertNotFound();
         $this->assertDatabaseHas('tags', [
             'id' => $tag->id,
-            'name' => 'new name',
+            'name' => 'oldTag',
         ]);
     }
 
-    public function test_update_rejects_duplicate_name_after_normalization(): void
+    public function test_store_rejects_duplicate_name_after_normalization(): void
     {
-        $first = Tag::query()->create(['name' => 'night city']);
-        $second = Tag::query()->create(['name' => 'street']);
+        Tag::query()->create([
+            'name' => 'nightCity',
+        ]);
 
-        $response = $this->patchJson("/api/v1/tags/{$second->id}", [
+        $response = $this->postJson('/api/v1/tags', [
             'name' => ' Night   City ',
         ]);
 
         $response->assertStatus(422);
-        $this->assertDatabaseHas('tags', [
-            'id' => $first->id,
-            'name' => 'night city',
+        $response->assertJsonValidationErrors(['name']);
+    }
+
+    public function test_store_rejects_blank_name_and_does_not_generate_fallback_tag(): void
+    {
+        $response = $this->postJson('/api/v1/tags', [
+            'name' => '   ',
         ]);
+
+        $response->assertStatus(422);
+        $response->assertJsonValidationErrors(['name']);
+        $this->assertDatabaseMissing('tags', [
+            'name' => 'tag',
+        ]);
+    }
+
+    public function test_index_returns_sorted_tag_list_for_filters(): void
+    {
+        Tag::query()->create(['name' => 'cityNight']);
+        Tag::query()->create(['name' => 'bird']);
+        Tag::query()->create(['name' => 'autumn']);
+
+        $response = $this->getJson('/api/v1/tags?limit=10');
+
+        $response->assertOk();
+        $response->assertJsonPath('data.0.name', 'autumn');
+        $response->assertJsonPath('data.1.name', 'bird');
+        $response->assertJsonPath('data.2.name', 'cityNight');
     }
 }

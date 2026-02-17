@@ -169,7 +169,7 @@ Status codes:
 
 - All routes except `POST /auth/register` and `POST /auth/login` require Bearer token.
 - `Series` and nested `Photo` operations are restricted to owner (`series.user_id`).
-- `Tag` manual create/update requires authenticated user.
+- `Tag` manual create/list/suggest requires authenticated user.
 
 ## Series
 
@@ -189,6 +189,10 @@ Tag filter normalization:
 - examples: `Red Bird`, `red-bird`, `red bird` => `redBird`
 
 Response: Laravel paginator with `data`.
+Each series item includes:
+- `tags`
+- `photos_count`
+- `preview_photos` (up to 30 photos for card preview: `id`, `path`, `original_name`, `preview_url`)
 
 ### `POST /series`
 
@@ -200,8 +204,8 @@ Content-Type:
 Fields:
 - `title` (required, string, max 255)
 - `description` (optional, string)
-- `photos[]` (required, 1..20 files)
-- each photo: image, max 10MB, extensions `jpg|jpeg|png|webp`, mime `image/jpeg|image/png|image/webp`
+- `photos[]` (required, 1..50 files)
+- each photo: image, max 20MB, extensions `jpg|jpeg|png|webp`, mime `image/jpeg|image/png|image/webp`
 
 Success response `201`:
 
@@ -281,7 +285,7 @@ Content-Type:
 - `multipart/form-data`
 
 Fields:
-- `photos[]` (required, 1..20 files)
+- `photos[]` (required, 1..50 files)
 - each photo validation same as `POST /series`
 
 Success response `201`:
@@ -340,50 +344,28 @@ Response `200`:
 Response: `204 No Content`.  
 Behavior: deletes file from storage and then photo DB row.
 
-## Photo tags
-
-### `PUT /series/{series}/photos/{photo}/tags`
-
-Sync exact tag set for photo (replace existing).
-
-Fields:
-- `tags` (required array, 1..50)
-- `tags[]` (string, max 50, only latin letters and spaces)
-
-Normalization:
-- trim spaces
-- collapse duplicates
-- lowercase
-
-Response: photo in `data` with updated `tags`.
-
-### `POST /series/{series}/photos/{photo}/tags`
-
-Attach tags without removing existing.
-
-Fields and normalization same as `PUT`.
-
-Response: photo in `data` with updated `tags`.
-
-### `DELETE /series/{series}/photos/{photo}/tags/{tag}`
-
-Detach one tag from photo.
-
-Response: photo in `data` with updated `tags`.
-
 ## Tags (manual management)
+
+### `GET /tags`
+
+List tags for filters/autocomplete.
+
+Query params:
+- `q` (optional, prefix match)
+- `limit` (optional, int, 1..500, default 200)
+
+Response: `data` array of tags sorted by name.
 
 ### `POST /tags`
 
 Create tag manually.
 
 Fields:
-- `name` (required, max 50, only latin letters and spaces, unique)
+- `name` (required, max 50, latin letters/digits/spaces, unique after normalization)
 
 Normalization before validation:
-- trim spaces
-- collapse multiple spaces into one
-- lowercase
+- normalize to camelCase (same canonical format used everywhere in API)
+- examples: `Night City`, `night-city`, `night city` -> `nightCity`
 
 Response `201`:
 
@@ -391,15 +373,12 @@ Response `201`:
 {
   "data": {
     "id": 1,
-    "name": "night city"
+    "name": "nightCity"
   }
 }
 ```
 
-### `PATCH /tags/{tag}`
-
-Update tag name manually.
-
-Fields and normalization same as `POST /tags`.
-
-Response: updated tag in `data`.
+Notes:
+- tags are global/shared across users
+- users can attach tags to series (`POST /series/{series}/tags`) and detach tags from series (`DELETE /series/{series}/tags/{tag}`)
+- renaming existing tags via API is not available for users

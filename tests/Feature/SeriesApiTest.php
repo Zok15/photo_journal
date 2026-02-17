@@ -58,6 +58,30 @@ class SeriesApiTest extends TestCase
         $this->assertSame(0, $rows[$first->id]['photos_count']);
     }
 
+    public function test_index_includes_preview_photos_up_to_thirty_per_series(): void
+    {
+        $series = Series::query()->create([
+            'user_id' => $this->user->id,
+            'title' => 'Preview set',
+            'description' => 'Preview limit',
+        ]);
+
+        foreach (range(1, 6) as $index) {
+            $series->photos()->create([
+                'path' => "photos/series/{$series->id}/{$index}.jpg",
+                'original_name' => "{$index}.jpg",
+                'created_at' => now()->subMinutes($index),
+            ]);
+        }
+
+        $response = $this->getJson('/api/v1/series');
+
+        $response->assertOk();
+        $previewPhotos = collect($response->json('data.0.preview_photos'));
+        $this->assertCount(6, $previewPhotos);
+        $this->assertTrue($previewPhotos->every(fn (array $row): bool => array_key_exists('path', $row)));
+    }
+
     public function test_store_creates_series_and_dispatches_processing_job(): void
     {
         Queue::fake();
@@ -317,26 +341,21 @@ class SeriesApiTest extends TestCase
         $second->assertOk();
     }
 
-    public function test_index_etag_changes_after_tag_rename(): void
+    public function test_index_etag_changes_after_tag_attach(): void
     {
         $series = Series::query()->create([
             'user_id' => $this->user->id,
             'title' => 'Tag cache',
-            'description' => 'rename',
+            'description' => 'attach',
         ]);
-
-        $tag = Tag::query()->create([
-            'name' => 'oldTag',
-        ]);
-        $series->tags()->attach($tag->id);
 
         $first = $this->getJson('/api/v1/series');
         $first->assertOk();
         $etagBefore = (string) $first->headers->get('ETag');
         $this->assertNotSame('', $etagBefore);
 
-        $this->patchJson("/api/v1/tags/{$tag->id}", [
-            'name' => 'newTag',
+        $this->postJson("/api/v1/series/{$series->id}/tags", [
+            'tags' => ['newTag'],
         ])->assertOk();
 
         $second = $this->getJson('/api/v1/series');

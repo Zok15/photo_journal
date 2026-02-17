@@ -14,6 +14,6 @@ class TagPolicy
 
     public function update(User $user, Tag $tag): bool
     {
-        return true;
+        return false;
     }
 }

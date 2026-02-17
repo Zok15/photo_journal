@@ -32,8 +32,8 @@ Route::prefix('v1')->group(function () {
         Route::patch('series/{series}/photos/{photo}', [SeriesPhotoController::class, 'update']);
         Route::delete('series/{series}/photos/{photo}', [SeriesPhotoController::class, 'destroy']);
 
+        Route::get('tags', [TagController::class, 'index']);
         Route::post('tags', [TagController::class, 'store']);
         Route::get('tags/suggest', [TagController::class, 'suggest']);
-        Route::patch('tags/{tag}', [TagController::class, 'update']);
     });
 });

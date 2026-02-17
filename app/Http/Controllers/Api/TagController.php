@@ -4,15 +4,39 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Http\Requests\StoreTagRequest;
-use App\Http\Requests\UpdateTagRequest;
-use App\Models\Series;
 use App\Models\Tag;
-use App\Support\SeriesResponseCache;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
 class TagController extends Controller
 {
+    public function index(Request $request): JsonResponse
+    {
+        $this->authorize('create', Tag::class);
+
+        $data = $request->validate([
+            'q' => ['nullable', 'string', 'max:120'],
+            'limit' => ['nullable', 'integer', 'min:1', 'max:500'],
+        ]);
+
+        $query = trim((string) ($data['q'] ?? ''));
+        $limit = (int) ($data['limit'] ?? 200);
+
+        $tagsQuery = Tag::query()
+            ->select(['id', 'name'])
+            ->orderBy('name')
+            ->limit($limit);
+
+        if ($query !== '') {
+            $prefix = mb_substr($query, 0, 64);
+            $tagsQuery->where('name', 'like', $prefix.'%');
+        }
+
+        return response()->json([
+            'data' => $tagsQuery->get(),
+        ]);
+    }
+
     public function suggest(Request $request): JsonResponse
     {
         $this->authorize('create', Tag::class);
@@ -52,45 +76,5 @@ class TagController extends Controller
         return response()->json([
             'data' => $tag,
         ], 201);
-    }
-
-    public function update(UpdateTagRequest $request, Tag $tag): JsonResponse
-    {
-        $this->authorize('update', $tag);
-
-        $tag->update($request->validated());
-        $this->invalidateRelatedSeriesCaches($tag);
-
-        return response()->json([
-            'data' => $tag->fresh(),
-        ]);
-    }
-
-    private function invalidateRelatedSeriesCaches(Tag $tag): void
-    {
-        $seriesIds = Series::query()
-            ->whereHas('tags', fn ($query) => $query->where('tags.id', $tag->id))
-            ->pluck('id')
-            ->map(fn ($id): int => (int) $id)
-            ->unique()
-            ->values();
-
-        if ($seriesIds->isEmpty()) {
-            return;
-        }
-
-        $userIds = Series::query()
-            ->whereIn('id', $seriesIds->all())
-            ->pluck('user_id')
-            ->map(fn ($id): int => (int) $id)
-            ->unique();
-
-        foreach ($userIds as $userId) {
-            SeriesResponseCache::bumpUser($userId);
-        }
-
-        foreach ($seriesIds as $seriesId) {
-            SeriesResponseCache::bumpSeries($seriesId);
-        }
     }
 }

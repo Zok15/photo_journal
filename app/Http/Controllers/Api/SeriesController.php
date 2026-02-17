@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\StoreSeriesWithPhotosRequest;
 use App\Jobs\ProcessSeries;
+use App\Models\Photo;
 use App\Models\Series;
 use App\Models\Tag;
 use App\Services\PhotoBatchUploader;
@@ -86,7 +87,18 @@ class SeriesController extends Controller
 
         $cacheKey = $this->buildSeriesIndexCacheKey($request, $validated, $perPage);
         $payload = $this->cachedPayload($cacheKey, function () use ($query, $perPage): array {
-            return $query->paginate($perPage)->withQueryString()->toArray();
+            $paginator = $query->paginate($perPage)->withQueryString();
+            $collection = $paginator->getCollection();
+            $previewMap = $this->buildSeriesPreviewMap($collection);
+
+            $paginator->setCollection($collection->map(function (Series $series) use ($previewMap): array {
+                $data = $series->toArray();
+                $data['preview_photos'] = $previewMap[(int) $series->id] ?? [];
+
+                return $data;
+            }));
+
+            return $paginator->toArray();
         }, 'series.index');
 
         $userId = (int) $request->user()->id;
@@ -304,6 +316,61 @@ class SeriesController extends Controller
             ->unique()
             ->values()
             ->all();
+    }
+
+    /**
+     * @param \Illuminate\Support\Collection<int, Series> $seriesCollection
+     * @return array<int, array<int, array{id:int, path:string|null, original_name:string|null, preview_url:string|null}>>
+     */
+    private function buildSeriesPreviewMap(\Illuminate\Support\Collection $seriesCollection): array
+    {
+        $seriesIds = $seriesCollection
+            ->pluck('id')
+            ->map(fn ($id): int => (int) $id)
+            ->filter()
+            ->values()
+            ->all();
+
+        if ($seriesIds === []) {
+            return [];
+        }
+
+        $limitPerSeries = 30;
+        $disk = config('filesystems.default');
+
+        /** @var \Illuminate\Support\Collection<int, Photo> $photos */
+        $photos = Photo::query()
+            ->select(['id', 'series_id', 'path', 'original_name', 'sort_order', 'created_at'])
+            ->whereIn('series_id', $seriesIds)
+            ->orderBy('series_id')
+            ->orderByRaw('sort_order IS NULL')
+            ->orderBy('sort_order')
+            ->latest('created_at')
+            ->latest('id')
+            ->get();
+
+        $map = [];
+        $counts = [];
+
+        foreach ($photos as $photo) {
+            $seriesId = (int) $photo->series_id;
+            $counts[$seriesId] = ($counts[$seriesId] ?? 0);
+
+            if ($counts[$seriesId] >= $limitPerSeries) {
+                continue;
+            }
+
+            $map[$seriesId] ??= [];
+            $map[$seriesId][] = [
+                'id' => (int) $photo->id,
+                'path' => $photo->path,
+                'original_name' => $photo->original_name,
+                'preview_url' => $this->resolvePhotoPreviewUrl($disk, $photo->path),
+            ];
+            $counts[$seriesId]++;
+        }
+
+        return $map;
     }
 
     private function findOrCreateTagSafely(string $name): Tag
