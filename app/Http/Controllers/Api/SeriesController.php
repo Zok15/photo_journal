@@ -8,11 +8,13 @@ use App\Jobs\ProcessSeries;
 use App\Models\Series;
 use App\Models\Tag;
 use App\Services\PhotoBatchUploader;
+use App\Support\SeriesResponseCache;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 
 class SeriesController extends Controller
@@ -82,10 +84,13 @@ class SeriesController extends Controller
         }
 
         $cacheKey = $this->buildSeriesIndexCacheKey($request, $validated, $perPage);
-        $cacheTtl = now()->addSeconds($this->responseCacheTtlSeconds());
-        $payload = Cache::remember($cacheKey, $cacheTtl, static fn () => $query->paginate($perPage)->withQueryString()->toArray());
+        $payload = $this->cachedPayload($cacheKey, function () use ($query, $perPage): array {
+            return $query->paginate($perPage)->withQueryString()->toArray();
+        }, 'series.index');
 
-        return $this->respondWithConditionalJson($request, $payload);
+        $lastModified = (clone $query)->max('updated_at');
+
+        return $this->respondWithConditionalJson($request, $payload, $lastModified);
     }
 
     public function store(StoreSeriesWithPhotosRequest $request): JsonResponse
@@ -116,6 +121,7 @@ class SeriesController extends Controller
         }
 
         ProcessSeries::dispatch($series->id);
+        $this->invalidateSeriesCaches($request->user()->id, $series);
 
         return response()->json([
             'id' => $series->id,
@@ -158,10 +164,20 @@ class SeriesController extends Controller
         ];
 
         $cacheKey = $this->buildSeriesShowCacheKey($request, $series, $validated);
-        $cacheTtl = now()->addSeconds($this->responseCacheTtlSeconds());
-        $payload = Cache::remember($cacheKey, $cacheTtl, static fn () => $payload);
+        $payload = $this->cachedPayload($cacheKey, static fn () => $payload, 'series.show');
 
-        return $this->respondWithConditionalJson($request, $payload);
+        $lastModified = $series->updated_at;
+        if ($request->boolean('include_photos')) {
+            $photosLastUpdated = $series->photos()->max('updated_at');
+            if ($photosLastUpdated !== null) {
+                $photoUpdatedAt = Carbon::parse((string) $photosLastUpdated);
+                if ($lastModified === null || $photoUpdatedAt->gt($lastModified)) {
+                    $lastModified = $photoUpdatedAt;
+                }
+            }
+        }
+
+        return $this->respondWithConditionalJson($request, $payload, $lastModified);
     }
 
     public function update(Request $request, Series $series): JsonResponse
@@ -174,6 +190,7 @@ class SeriesController extends Controller
         ]);
 
         $series->update($data);
+        $this->invalidateSeriesCaches($request->user()->id, $series);
 
         return response()->json([
             'data' => $series->fresh()->loadCount('photos')->load('tags'),
@@ -197,6 +214,8 @@ class SeriesController extends Controller
             Storage::disk($disk)->delete($photoPaths);
         }
 
+        $this->invalidateSeriesCaches((int) $series->user_id, $series);
+
         return response()->json(status: 204);
     }
 
@@ -213,6 +232,7 @@ class SeriesController extends Controller
         $tags = collect($names)->map(fn (string $name): Tag => $this->findOrCreateTagSafely($name));
 
         $series->tags()->syncWithoutDetaching($tags->pluck('id')->all());
+        $this->invalidateSeriesCaches((int) $series->user_id, $series);
 
         return response()->json([
             'data' => $series->fresh()->loadCount('photos')->load('tags'),
@@ -231,6 +251,8 @@ class SeriesController extends Controller
         if (! $stillUsedInSeries && ! $stillUsedInPhotos) {
             $tag->delete();
         }
+
+        $this->invalidateSeriesCaches((int) $series->user_id, $series);
 
         return response()->json([
             'data' => $series->fresh()->loadCount('photos')->load('tags'),
@@ -304,9 +326,9 @@ class SeriesController extends Controller
     {
         $normalized = $validated;
         $normalized['per_page'] = $perPage;
-        ksort($normalized);
+        $normalized['page'] = (int) ($validated['page'] ?? 1);
 
-        return 'series:index:user:'.$request->user()->id.':'.sha1(json_encode($normalized, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+        return SeriesResponseCache::indexKey((int) $request->user()->id, $normalized);
     }
 
     private function buildSeriesShowCacheKey(Request $request, Series $series, array $validated): string
@@ -314,29 +336,52 @@ class SeriesController extends Controller
         $normalized = [
             'include_photos' => (bool) ($validated['include_photos'] ?? false),
             'photos_limit' => (int) ($validated['photos_limit'] ?? 30),
-            'series_updated_at' => optional($series->updated_at)?->toAtomString(),
         ];
-        ksort($normalized);
 
-        return 'series:show:user:'.$request->user()->id.':series:'.$series->id.':'.sha1(json_encode($normalized, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+        return SeriesResponseCache::showKey((int) $request->user()->id, (int) $series->id, $normalized);
     }
 
-    private function respondWithConditionalJson(Request $request, array $payload): JsonResponse
+    private function respondWithConditionalJson(Request $request, array $payload, string|Carbon|null $lastModified = null): JsonResponse
     {
         $etagHash = sha1(json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
-        if ($this->ifNoneMatchMatches($request, $etagHash)) {
+        $lastModifiedAt = $lastModified instanceof Carbon
+            ? $lastModified
+            : ($lastModified !== null ? Carbon::parse($lastModified) : null);
+
+        if ($lastModifiedAt !== null && $this->ifModifiedSinceNotChanged($request, $lastModifiedAt)) {
             return response()
                 ->json([], 304)
                 ->setEtag($etagHash)
+                ->setLastModified($lastModifiedAt)
                 ->header('Cache-Control', $this->cacheControlHeaderValue())
                 ->header('Vary', 'Authorization, Accept');
         }
 
-        return response()
+        if ($this->ifNoneMatchMatches($request, $etagHash)) {
+            $response = response()
+                ->json([], 304)
+                ->setEtag($etagHash)
+                ->header('Cache-Control', $this->cacheControlHeaderValue())
+                ->header('Vary', 'Authorization, Accept');
+
+            if ($lastModifiedAt !== null) {
+                $response->setLastModified($lastModifiedAt);
+            }
+
+            return $response;
+        }
+
+        $response = response()
             ->json($payload)
             ->setEtag($etagHash)
             ->header('Cache-Control', $this->cacheControlHeaderValue())
             ->header('Vary', 'Authorization, Accept');
+
+        if ($lastModifiedAt !== null) {
+            $response->setLastModified($lastModifiedAt);
+        }
+
+        return $response;
     }
 
     private function ifNoneMatchMatches(Request $request, string $etagHash): bool
@@ -364,5 +409,54 @@ class SeriesController extends Controller
         $swr = $ttl * 2;
 
         return "private, max-age={$ttl}, stale-while-revalidate={$swr}";
+    }
+
+    private function ifModifiedSinceNotChanged(Request $request, Carbon $lastModified): bool
+    {
+        $value = trim((string) $request->header('If-Modified-Since', ''));
+        if ($value === '') {
+            return false;
+        }
+
+        try {
+            $since = Carbon::parse($value);
+        } catch (\Throwable) {
+            return false;
+        }
+
+        return $lastModified->lessThanOrEqualTo($since);
+    }
+
+    private function cachedPayload(string $cacheKey, \Closure $resolver, string $scope): array
+    {
+        $startedAt = microtime(true);
+        $cached = Cache::get($cacheKey);
+
+        if (is_array($cached)) {
+            $this->logCacheMetric($scope, 'hit', $startedAt);
+
+            return $cached;
+        }
+
+        $payload = $resolver();
+        Cache::put($cacheKey, $payload, now()->addSeconds($this->responseCacheTtlSeconds()));
+        $this->logCacheMetric($scope, 'miss', $startedAt);
+
+        return $payload;
+    }
+
+    private function logCacheMetric(string $scope, string $result, float $startedAt): void
+    {
+        Log::info('series.response_cache', [
+            'scope' => $scope,
+            'result' => $result,
+            'elapsed_ms' => (int) round((microtime(true) - $startedAt) * 1000),
+        ]);
+    }
+
+    private function invalidateSeriesCaches(int $userId, Series $series): void
+    {
+        SeriesResponseCache::bumpUser($userId);
+        SeriesResponseCache::bumpSeries((int) $series->id);
     }
 }

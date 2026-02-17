@@ -220,6 +220,51 @@ class SeriesApiTest extends TestCase
         $this->assertSame('', (string) $second->getContent());
     }
 
+    public function test_index_etag_changes_after_series_update(): void
+    {
+        $series = Series::query()->create([
+            'user_id' => $this->user->id,
+            'title' => 'Before etag',
+            'description' => 'value',
+        ]);
+
+        $first = $this->getJson('/api/v1/series');
+        $first->assertOk();
+        $etagBefore = (string) $first->headers->get('ETag');
+        $this->assertNotSame('', $etagBefore);
+
+        $this->patchJson("/api/v1/series/{$series->id}", [
+            'title' => 'After etag',
+        ])->assertOk();
+
+        $second = $this->getJson('/api/v1/series');
+        $second->assertOk();
+        $etagAfter = (string) $second->headers->get('ETag');
+        $this->assertNotSame('', $etagAfter);
+        $this->assertNotSame($etagBefore, $etagAfter);
+    }
+
+    public function test_show_returns_304_for_if_modified_since(): void
+    {
+        $series = Series::query()->create([
+            'user_id' => $this->user->id,
+            'title' => 'Cached modified-since',
+            'description' => 'etag',
+        ]);
+
+        $first = $this->getJson("/api/v1/series/{$series->id}");
+        $first->assertOk();
+        $lastModified = (string) $first->headers->get('Last-Modified');
+        $this->assertNotSame('', $lastModified);
+
+        $second = $this
+            ->withHeader('If-Modified-Since', $lastModified)
+            ->get("/api/v1/series/{$series->id}", ['Accept' => 'application/json']);
+
+        $second->assertStatus(304);
+        $this->assertSame('', (string) $second->getContent());
+    }
+
     public function test_update_changes_title_and_description(): void
     {
         $series = Series::query()->create([

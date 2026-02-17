@@ -10,6 +10,7 @@ use App\Models\Photo;
 use App\Models\Series;
 use App\Services\PhotoAutoTagger;
 use App\Services\PhotoBatchUploader;
+use App\Support\SeriesResponseCache;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -61,6 +62,8 @@ class SeriesPhotoController extends Controller
                 'photos_failed' => $failed,
             ], 422);
         }
+
+        $this->invalidateSeriesCaches($series);
 
         return response()->json([
             'photos_created' => $created,
@@ -131,6 +134,8 @@ class SeriesPhotoController extends Controller
             }
         });
 
+        $this->invalidateSeriesCaches($series);
+
         return response()->json([
             'data' => [
                 'photo_ids' => $data['photo_ids'],
@@ -143,6 +148,7 @@ class SeriesPhotoController extends Controller
         $this->authorize('update', $series);
 
         ['processed' => $processed, 'failed' => $failed] = $this->rebuildSeriesTagsFromPhotos($series);
+        $this->invalidateSeriesCaches($series);
 
         return response()->json([
             'data' => [
@@ -167,6 +173,7 @@ class SeriesPhotoController extends Controller
         }
 
         $photo->update($data);
+        $this->invalidateSeriesCaches($series);
 
         return response()->json([
             'data' => $photo->fresh(),
@@ -183,6 +190,7 @@ class SeriesPhotoController extends Controller
 
         $photo->delete();
         $this->rebuildSeriesTagsFromPhotos($series);
+        $this->invalidateSeriesCaches($series);
 
         return response()->json(status: 204);
     }
@@ -269,5 +277,11 @@ class SeriesPhotoController extends Controller
             'processed' => $processed,
             'failed' => $failed,
         ];
+    }
+
+    private function invalidateSeriesCaches(Series $series): void
+    {
+        SeriesResponseCache::bumpUser((int) $series->user_id);
+        SeriesResponseCache::bumpSeries((int) $series->id);
     }
 }
