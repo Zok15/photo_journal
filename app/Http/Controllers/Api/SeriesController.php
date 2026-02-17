@@ -154,8 +154,9 @@ class SeriesController extends Controller
             'include_photos' => ['nullable', 'boolean'],
             'photos_limit' => ['nullable', 'integer', 'min:1', 'max:100'],
         ]);
+        $includePhotos = $request->boolean('include_photos');
 
-        if ($request->boolean('include_photos')) {
+        if ($includePhotos) {
             $limit = $validated['photos_limit'] ?? 30;
             $disk = config('filesystems.default');
 
@@ -178,14 +179,25 @@ class SeriesController extends Controller
             'data' => $series->toArray(),
         ];
 
-        $cacheKey = $this->buildSeriesShowCacheKey($request, $series, $validated);
-        $payload = $this->cachedPayload($cacheKey, static fn () => $payload, 'series.show');
+        // Responses with photo previews contain temporary signed URLs.
+        // They must never be cached/304-revalidated, otherwise clients keep expired links.
+        if (! $includePhotos) {
+            $cacheKey = $this->buildSeriesShowCacheKey($request, $series, $validated);
+            $payload = $this->cachedPayload($cacheKey, static fn () => $payload, 'series.show');
+        }
 
         $lastModified = $this->latestTimestamp(
             $series->updated_at,
             $series->photos()->max('updated_at'),
             $series->tags()->max('tags.updated_at'),
         );
+
+        if ($includePhotos) {
+            return response()
+                ->json($payload)
+                ->header('Cache-Control', 'private, no-store')
+                ->header('Vary', 'Authorization, Accept');
+        }
 
         return $this->respondWithConditionalJson($request, $payload, $lastModified);
     }

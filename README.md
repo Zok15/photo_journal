@@ -41,7 +41,7 @@ $ pnpm install
 $ cp .env.example .env  
 $ php artisan key:generate  
 $ php artisan migrate  
-$ php artisan serve  
+$ php -d upload_max_filesize=20M -d post_max_size=1024M -d max_file_uploads=100 artisan serve  
 $ php artisan queue:work --tries=3  
 $ pnpm run dev  
 
@@ -62,9 +62,13 @@ $ pnpm run dev
 - `VITE_API_BASE_URL=http://127.0.0.1:8091/api/v1`
 
 4. Запустить backend на отдельном порту
-- `php artisan serve --host=127.0.0.1 --port=8091`
+- `php -d upload_max_filesize=20M -d post_max_size=1024M -d max_file_uploads=100 artisan serve --host=127.0.0.1 --port=8091`
 
-5. Быстрый smoke-check auth
+5. Для загрузки больших серий (до ~50 фото по 20MB)
+- убедиться, что backend запущен с лимитами выше;
+- `post_max_size` должен быть выше суммарного payload (для 50x20MB ставим не меньше `1024M`).
+
+6. Быстрый smoke-check auth
 - `curl -X POST http://127.0.0.1:8091/api/v1/auth/login -H "Content-Type: application/json" -d '{"email":"admin@example.com","password":"admin12345"}'`
 - использовать `token` из ответа в заголовке `Authorization: Bearer <token>`
 - `curl http://127.0.0.1:8091/api/v1/profile -H "Authorization: Bearer <token>"`

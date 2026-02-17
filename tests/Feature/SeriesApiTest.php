@@ -178,6 +178,28 @@ class SeriesApiTest extends TestCase
         $response->assertJsonPath('data.tags.0.name', 'landscape');
     }
 
+    public function test_show_with_include_photos_disables_http_caching(): void
+    {
+        $series = Series::query()->create([
+            'user_id' => $this->user->id,
+            'title' => 'No cache previews',
+            'description' => 'signed urls',
+        ]);
+
+        Photo::query()->create([
+            'series_id' => $series->id,
+            'path' => 'photos/mountains-2.jpg',
+            'original_name' => 'mountains-2.jpg',
+            'mime' => 'image/jpeg',
+        ]);
+
+        $response = $this->getJson("/api/v1/series/{$series->id}?include_photos=1");
+
+        $response->assertOk();
+        $cacheControl = (string) $response->headers->get('Cache-Control');
+        $this->assertStringContainsString('no-store', $cacheControl);
+    }
+
     public function test_index_returns_304_when_if_none_match_matches(): void
     {
         Series::query()->create([
