@@ -42,10 +42,17 @@ class SeriesController extends Controller
             ->where('user_id', $request->user()->id)
             ->with('tags')
             ->withCount('photos');
+        $calendarDatesQuery = Series::query()
+            ->where('user_id', $request->user()->id);
 
         $search = trim((string) ($validated['search'] ?? ''));
         if ($search !== '') {
             $query->where(function ($builder) use ($search): void {
+                $builder
+                    ->where('title', 'like', '%'.$search.'%')
+                    ->orWhere('description', 'like', '%'.$search.'%');
+            });
+            $calendarDatesQuery->where(function ($builder) use ($search): void {
                 $builder
                     ->where('title', 'like', '%'.$search.'%')
                     ->orWhere('description', 'like', '%'.$search.'%');
@@ -65,8 +72,20 @@ class SeriesController extends Controller
                 $query->whereHas('tags', function ($builder) use ($tagName): void {
                     $builder->where('name', $tagName);
                 });
+                $calendarDatesQuery->whereHas('tags', function ($builder) use ($tagName): void {
+                    $builder->where('name', $tagName);
+                });
             }
         }
+
+        $calendarDates = $calendarDatesQuery
+            ->selectRaw('DATE(created_at) as date_key')
+            ->distinct()
+            ->orderBy('date_key')
+            ->pluck('date_key')
+            ->filter()
+            ->values()
+            ->all();
 
         $dateFrom = $validated['date_from'] ?? null;
         $dateTo = $validated['date_to'] ?? null;
@@ -97,6 +116,7 @@ class SeriesController extends Controller
         }));
 
         $payload = $paginator->toArray();
+        $payload['calendar_dates'] = $calendarDates;
 
         $userId = (int) $request->user()->id;
         $seriesTable = (new Series)->getTable();

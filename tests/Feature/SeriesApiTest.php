@@ -9,6 +9,7 @@ use App\Models\Tag;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Storage;
 use Laravel\Sanctum\Sanctum;
@@ -498,6 +499,37 @@ class SeriesApiTest extends TestCase
         $response->assertOk();
         $this->assertCount(1, $response->json('data'));
         $response->assertJsonPath('data.0.id', $inside->id);
+    }
+
+    public function test_index_returns_full_calendar_dates_even_when_date_filter_is_applied(): void
+    {
+        $first = Series::query()->create([
+            'user_id' => $this->user->id,
+            'title' => 'Calendar first',
+            'description' => null,
+        ]);
+        $first->forceFill([
+            'created_at' => Carbon::parse('2026-02-10 10:00:00'),
+            'updated_at' => Carbon::parse('2026-02-10 10:00:00'),
+        ])->saveQuietly();
+
+        $second = Series::query()->create([
+            'user_id' => $this->user->id,
+            'title' => 'Calendar second',
+            'description' => null,
+        ]);
+        $second->forceFill([
+            'created_at' => Carbon::parse('2026-02-16 12:00:00'),
+            'updated_at' => Carbon::parse('2026-02-16 12:00:00'),
+        ])->saveQuietly();
+
+        $response = $this->getJson('/api/v1/series?date_from=2026-02-16&date_to=2026-02-16&per_page=1');
+        $response->assertOk();
+        $response->assertJsonPath('total', 1);
+
+        $calendarDates = collect($response->json('calendar_dates'));
+        $this->assertTrue($calendarDates->contains('2026-02-10'));
+        $this->assertTrue($calendarDates->contains('2026-02-16'));
     }
 
     public function test_index_sorts_oldest_when_requested(): void
