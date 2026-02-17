@@ -58,7 +58,7 @@ class SeriesApiTest extends TestCase
         $this->assertSame(0, $rows[$first->id]['photos_count']);
     }
 
-    public function test_index_includes_preview_photos_up_to_thirty_per_series(): void
+    public function test_index_includes_all_preview_photos_for_series(): void
     {
         $series = Series::query()->create([
             'user_id' => $this->user->id,
@@ -66,7 +66,7 @@ class SeriesApiTest extends TestCase
             'description' => 'Preview limit',
         ]);
 
-        foreach (range(1, 6) as $index) {
+        foreach (range(1, 31) as $index) {
             $series->photos()->create([
                 'path' => "photos/series/{$series->id}/{$index}.jpg",
                 'original_name' => "{$index}.jpg",
@@ -78,7 +78,7 @@ class SeriesApiTest extends TestCase
 
         $response->assertOk();
         $previewPhotos = collect($response->json('data.0.preview_photos'));
-        $this->assertCount(6, $previewPhotos);
+        $this->assertCount(31, $previewPhotos);
         $this->assertTrue($previewPhotos->every(fn (array $row): bool => array_key_exists('path', $row)));
     }
 

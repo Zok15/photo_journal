@@ -335,7 +335,6 @@ class SeriesController extends Controller
             return [];
         }
 
-        $limitPerSeries = 30;
         $disk = config('filesystems.default');
 
         /** @var \Illuminate\Support\Collection<int, Photo> $photos */
@@ -350,15 +349,9 @@ class SeriesController extends Controller
             ->get();
 
         $map = [];
-        $counts = [];
 
         foreach ($photos as $photo) {
             $seriesId = (int) $photo->series_id;
-            $counts[$seriesId] = ($counts[$seriesId] ?? 0);
-
-            if ($counts[$seriesId] >= $limitPerSeries) {
-                continue;
-            }
 
             $map[$seriesId] ??= [];
             $map[$seriesId][] = [
@@ -367,7 +360,6 @@ class SeriesController extends Controller
                 'original_name' => $photo->original_name,
                 'preview_url' => $this->resolvePhotoPreviewUrl($disk, $photo->path),
             ];
-            $counts[$seriesId]++;
         }
 
         return $map;
