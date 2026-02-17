@@ -5,7 +5,9 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\StoreTagRequest;
 use App\Http\Requests\UpdateTagRequest;
+use App\Models\Series;
 use App\Models\Tag;
+use App\Support\SeriesResponseCache;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -57,9 +59,38 @@ class TagController extends Controller
         $this->authorize('update', $tag);
 
         $tag->update($request->validated());
+        $this->invalidateRelatedSeriesCaches($tag);
 
         return response()->json([
             'data' => $tag->fresh(),
         ]);
+    }
+
+    private function invalidateRelatedSeriesCaches(Tag $tag): void
+    {
+        $seriesIds = Series::query()
+            ->whereHas('tags', fn ($query) => $query->where('tags.id', $tag->id))
+            ->pluck('id')
+            ->map(fn ($id): int => (int) $id)
+            ->unique()
+            ->values();
+
+        if ($seriesIds->isEmpty()) {
+            return;
+        }
+
+        $userIds = Series::query()
+            ->whereIn('id', $seriesIds->all())
+            ->pluck('user_id')
+            ->map(fn ($id): int => (int) $id)
+            ->unique();
+
+        foreach ($userIds as $userId) {
+            SeriesResponseCache::bumpUser($userId);
+        }
+
+        foreach ($seriesIds as $seriesId) {
+            SeriesResponseCache::bumpSeries($seriesId);
+        }
     }
 }

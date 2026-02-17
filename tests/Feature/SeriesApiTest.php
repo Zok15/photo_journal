@@ -265,6 +265,66 @@ class SeriesApiTest extends TestCase
         $this->assertSame('', (string) $second->getContent());
     }
 
+    public function test_show_does_not_return_304_when_photos_changed_after_if_modified_since(): void
+    {
+        $series = Series::query()->create([
+            'user_id' => $this->user->id,
+            'title' => 'Photos cache',
+            'description' => 'ims',
+        ]);
+
+        $first = $this->getJson("/api/v1/series/{$series->id}");
+        $first->assertOk();
+        $lastModified = (string) $first->headers->get('Last-Modified');
+        $this->assertNotSame('', $lastModified);
+
+        $photo = Photo::query()->create([
+            'series_id' => $series->id,
+            'path' => 'photos/new-photo.jpg',
+            'original_name' => 'new-photo.jpg',
+            'mime' => 'image/jpeg',
+        ]);
+        $photo->forceFill([
+            'updated_at' => now()->addSeconds(3),
+        ])->saveQuietly();
+
+        $second = $this
+            ->withHeader('If-Modified-Since', $lastModified)
+            ->get("/api/v1/series/{$series->id}", ['Accept' => 'application/json']);
+
+        $second->assertOk();
+    }
+
+    public function test_index_etag_changes_after_tag_rename(): void
+    {
+        $series = Series::query()->create([
+            'user_id' => $this->user->id,
+            'title' => 'Tag cache',
+            'description' => 'rename',
+        ]);
+
+        $tag = Tag::query()->create([
+            'name' => 'oldTag',
+        ]);
+        $series->tags()->attach($tag->id);
+
+        $first = $this->getJson('/api/v1/series');
+        $first->assertOk();
+        $etagBefore = (string) $first->headers->get('ETag');
+        $this->assertNotSame('', $etagBefore);
+
+        $this->patchJson("/api/v1/tags/{$tag->id}", [
+            'name' => 'newTag',
+        ])->assertOk();
+
+        $second = $this->getJson('/api/v1/series');
+        $second->assertOk();
+        $etagAfter = (string) $second->headers->get('ETag');
+
+        $this->assertNotSame('', $etagAfter);
+        $this->assertNotSame($etagBefore, $etagAfter);
+    }
+
     public function test_update_changes_title_and_description(): void
     {
         $series = Series::query()->create([

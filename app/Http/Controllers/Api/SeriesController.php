@@ -14,6 +14,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 
@@ -88,7 +89,21 @@ class SeriesController extends Controller
             return $query->paginate($perPage)->withQueryString()->toArray();
         }, 'series.index');
 
-        $lastModified = (clone $query)->max('updated_at');
+        $userId = (int) $request->user()->id;
+        $seriesTable = (new Series)->getTable();
+
+        $lastModified = $this->latestTimestamp(
+            (clone $query)->max($seriesTable.'.updated_at'),
+            DB::table('photos')
+                ->join($seriesTable, $seriesTable.'.id', '=', 'photos.series_id')
+                ->where($seriesTable.'.user_id', $userId)
+                ->max('photos.updated_at'),
+            DB::table('series_tag')
+                ->join($seriesTable, $seriesTable.'.id', '=', 'series_tag.series_id')
+                ->join('tags', 'tags.id', '=', 'series_tag.tag_id')
+                ->where($seriesTable.'.user_id', $userId)
+                ->max('tags.updated_at'),
+        );
 
         return $this->respondWithConditionalJson($request, $payload, $lastModified);
     }
@@ -166,16 +181,11 @@ class SeriesController extends Controller
         $cacheKey = $this->buildSeriesShowCacheKey($request, $series, $validated);
         $payload = $this->cachedPayload($cacheKey, static fn () => $payload, 'series.show');
 
-        $lastModified = $series->updated_at;
-        if ($request->boolean('include_photos')) {
-            $photosLastUpdated = $series->photos()->max('updated_at');
-            if ($photosLastUpdated !== null) {
-                $photoUpdatedAt = Carbon::parse((string) $photosLastUpdated);
-                if ($lastModified === null || $photoUpdatedAt->gt($lastModified)) {
-                    $lastModified = $photoUpdatedAt;
-                }
-            }
-        }
+        $lastModified = $this->latestTimestamp(
+            $series->updated_at,
+            $series->photos()->max('updated_at'),
+            $series->tags()->max('tags.updated_at'),
+        );
 
         return $this->respondWithConditionalJson($request, $payload, $lastModified);
     }
@@ -425,6 +435,29 @@ class SeriesController extends Controller
         }
 
         return $lastModified->lessThanOrEqualTo($since);
+    }
+
+    private function latestTimestamp(string|Carbon|null ...$candidates): ?Carbon
+    {
+        $result = null;
+
+        foreach ($candidates as $candidate) {
+            if ($candidate === null || $candidate === '') {
+                continue;
+            }
+
+            try {
+                $timestamp = $candidate instanceof Carbon ? $candidate : Carbon::parse((string) $candidate);
+            } catch (\Throwable) {
+                continue;
+            }
+
+            if ($result === null || $timestamp->gt($result)) {
+                $result = $timestamp;
+            }
+        }
+
+        return $result;
     }
 
     private function cachedPayload(string $cacheKey, \Closure $resolver, string $scope): array
