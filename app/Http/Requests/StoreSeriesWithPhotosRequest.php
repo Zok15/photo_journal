@@ -4,6 +4,9 @@ namespace App\Http\Requests;
 
 use Illuminate\Foundation\Http\FormRequest;
 
+/**
+ * Валидация создания серии с пакетной загрузкой фото.
+ */
 class StoreSeriesWithPhotosRequest extends FormRequest
 {
     public function authorize(): bool

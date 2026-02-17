@@ -9,9 +9,20 @@ use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 
+/**
+ * Сервис автоматической генерации и синхронизации тегов для фотографий/серий.
+ *
+ * Источники тегов:
+ * - имя файла;
+ * - EXIF;
+ * - дата загрузки;
+ * - внешний vision-сервис.
+ */
 class PhotoAutoTagger
 {
-    public function __construct(private VisionTaggerClient $visionTaggerClient) {}
+    public function __construct(private VisionTaggerClient $visionTaggerClient)
+    {
+    }
 
     private const STOPWORDS = [
         'img', 'image', 'photo', 'picture', 'snapshot', 'scan', 'camera',
@@ -120,6 +131,7 @@ class PhotoAutoTagger
      */
     public function syncSeriesTags(Series $series, array $tagNames, bool $replace = true): void
     {
+        // Нормализация + ограничение количества тегов, чтобы держать данные чистыми.
         $normalized = collect($tagNames)
             ->filter(fn ($value): bool => is_string($value) && $value !== '')
             ->map(fn (string $value): string => $this->normalizeTag($value))
@@ -136,6 +148,7 @@ class PhotoAutoTagger
             ->all();
 
         if ($replace) {
+            // Полная синхронизация: удаляем старые связи, добавляем новые.
             $changes = $series->tags()->sync($ids);
             $this->cleanupDetachedOrphanTags($changes['detached'] ?? []);
             if ($this->hasSyncChanges($changes)) {
@@ -146,6 +159,7 @@ class PhotoAutoTagger
         }
 
         if ($ids !== []) {
+            // Мягкая синхронизация: только добавляем отсутствующие теги.
             $changes = $series->tags()->syncWithoutDetaching($ids);
             if ($this->hasSyncChanges($changes)) {
                 $this->touchSeriesForCache($series);
@@ -221,6 +235,7 @@ class PhotoAutoTagger
         $preparedBeforeVision = $this->normalizeAndDedupeTags($all);
         $skipVisionThreshold = max(0, (int) config('vision.skip_if_tags_count_at_least', 7));
 
+        // Если уже достаточно тегов локально — можно не дергать внешний сервис.
         if ($skipVisionThreshold > 0 && $preparedBeforeVision->count() >= $skipVisionThreshold) {
             return $preparedBeforeVision
                 ->take(self::MAX_TAGS)

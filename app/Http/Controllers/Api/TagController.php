@@ -8,10 +8,14 @@ use App\Models\Tag;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
+/**
+ * API для работы с тегами (список, подсказки, создание).
+ */
 class TagController extends Controller
 {
     public function index(Request $request): JsonResponse
     {
+        // Разрешаем доступ авторизованным пользователям (по политике).
         $this->authorize('create', Tag::class);
 
         $data = $request->validate([
@@ -28,6 +32,7 @@ class TagController extends Controller
             ->limit($limit);
 
         if ($query !== '') {
+            // Используем prefix-поиск для быстрых подсказок и фильтра.
             $prefix = mb_substr($query, 0, 64);
             $tagsQuery->where('name', 'like', $prefix.'%');
         }
@@ -50,6 +55,7 @@ class TagController extends Controller
         $limit = (int) ($data['limit'] ?? 8);
 
         if ($query === '') {
+            // Пустой запрос не нагружает БД и сразу возвращает пустой список.
             return response()->json(['data' => []]);
         }
 

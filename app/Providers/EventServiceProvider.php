@@ -6,6 +6,9 @@ use App\Events\SeriesUploaded;
 use App\Listeners\AddSeriesUploadedToOutbox;
 use Illuminate\Foundation\Support\Providers\EventServiceProvider as ServiceProvider;
 
+/**
+ * Регистрация связей "событие -> слушатель" для приложения.
+ */
 class EventServiceProvider extends ServiceProvider
 {
     /**

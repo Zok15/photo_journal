@@ -7,6 +7,10 @@ use App\Models\OutboxEvent;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 
+/**
+ * Команда-поллер outbox.
+ * Забирает pending-события и ставит джобы доставки в очередь.
+ */
 class OutboxPoll extends Command
 {
     protected $signature = 'outbox:poll {--limit=50}';
@@ -17,6 +21,7 @@ class OutboxPoll extends Command
     {
         $limit = (int) $this->option('limit');
 
+        // В транзакции "резервируем" пачку событий, чтобы воркеры не пересекались.
         $claimedIds = DB::transaction(function () use ($limit) {
             $ids = OutboxEvent::query()
                 ->where('status', 'pending')
@@ -51,6 +56,7 @@ class OutboxPoll extends Command
         });
 
         foreach ($claimedIds as $eventId) {
+            // Каждое событие уходит в отдельную джобу для ретраев и изоляции ошибок.
             DispatchOutboxEvent::dispatch((int) $eventId);
         }
 

@@ -10,16 +10,25 @@ use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
 
+/**
+ * Фоновая обработка серии после загрузки.
+ */
 class ProcessSeries implements ShouldQueue
 {
-    use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
+    use Dispatchable;
+    use InteractsWithQueue;
+    use Queueable;
+    use SerializesModels;
 
-    public function __construct(public int $seriesId) {}
+    public function __construct(public int $seriesId)
+    {
+    }
 
     public function handle(): void
     {
         $series = Series::query()->findOrFail($this->seriesId);
 
+        // Флаги позволяют включать/выключать этапы без изменения кода.
         if ((bool) config('photo_processing.preview_enabled', true)) {
             $this->generatePreviews($series);
         }
@@ -28,6 +37,7 @@ class ProcessSeries implements ShouldQueue
             $this->extractExif($series);
         }
 
+        // После обработки публикуем доменное событие.
         event(new SeriesUploaded($series));
     }
 

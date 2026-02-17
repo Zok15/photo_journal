@@ -19,9 +19,19 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 
+/**
+ * Основной API-контроллер фотосерий.
+ *
+ * Здесь собраны:
+ * - CRUD по сериям;
+ * - привязка/отвязка тегов;
+ * - выдача превью с учетом кеширования и условных запросов (ETag/Last-Modified).
+ */
 class SeriesController extends Controller
 {
-    public function __construct(private PhotoBatchUploader $photoBatchUploader) {}
+    public function __construct(private PhotoBatchUploader $photoBatchUploader)
+    {
+    }
 
     public function index(Request $request): JsonResponse
     {
@@ -38,10 +48,12 @@ class SeriesController extends Controller
         ]);
 
         $perPage = $validated['per_page'] ?? 15;
+        // $query — основной список серий для пагинации.
         $query = Series::query()
             ->where('user_id', $request->user()->id)
             ->with('tags')
             ->withCount('photos');
+        // Отдельный запрос для календарных маркеров дат.
         $calendarDatesQuery = Series::query()
             ->where('user_id', $request->user()->id);
 
@@ -106,6 +118,7 @@ class SeriesController extends Controller
 
         $paginator = $query->paginate($perPage)->withQueryString();
         $collection = $paginator->getCollection();
+        // Превью подгружаем батчем, чтобы не делать N+1 запросов.
         $previewMap = $this->buildSeriesPreviewMap($collection);
 
         $paginator->setCollection($collection->map(function (Series $series) use ($previewMap): array {
@@ -119,7 +132,7 @@ class SeriesController extends Controller
         $payload['calendar_dates'] = $calendarDates;
 
         $userId = (int) $request->user()->id;
-        $seriesTable = (new Series)->getTable();
+        $seriesTable = (new Series())->getTable();
 
         $lastModified = $this->latestTimestamp(
             (clone $query)->max($seriesTable.'.updated_at'),
@@ -134,6 +147,7 @@ class SeriesController extends Controller
                 ->max('tags.updated_at'),
         );
 
+        // Возвращаем ответ с ETag/Last-Modified для условного кеширования на клиенте.
         return $this->respondWithConditionalJson($request, $payload, $lastModified);
     }
 
@@ -165,6 +179,7 @@ class SeriesController extends Controller
         }
 
         ProcessSeries::dispatch($series->id);
+        // Инвалидация версий кеша после создания серии.
         $this->invalidateSeriesCaches($request->user()->id, $series);
 
         return response()->json([
@@ -334,6 +349,7 @@ class SeriesController extends Controller
         try {
             return $storage->temporaryUrl($path, Carbon::now()->addMinutes(30));
         } catch (\Throwable) {
+            // Для локальных дисков без signed URL отдаем обычный публичный URL.
             return $storage->url($path);
         }
     }
@@ -445,6 +461,7 @@ class SeriesController extends Controller
 
     private function respondWithConditionalJson(Request $request, array $payload, string|Carbon|null $lastModified = null): JsonResponse
     {
+        // ETag считаем от JSON-представления payload.
         $etagHash = sha1(json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
         $lastModifiedAt = $lastModified instanceof Carbon
             ? $lastModified
@@ -555,12 +572,14 @@ class SeriesController extends Controller
         $cached = Cache::get($cacheKey);
 
         if (is_array($cached)) {
+            // Hit: вернули из кеша без пересборки payload.
             $this->logCacheMetric($scope, 'hit', $startedAt);
 
             return $cached;
         }
 
         $payload = $resolver();
+        // Miss: строим заново и кладем в кеш на короткое время.
         Cache::put($cacheKey, $payload, now()->addSeconds($this->responseCacheTtlSeconds()));
         $this->logCacheMetric($scope, 'miss', $startedAt);
 

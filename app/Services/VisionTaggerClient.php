@@ -5,6 +5,9 @@ namespace App\Services;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Storage;
 
+/**
+ * HTTP-клиент внешнего vision-сервиса для определения тегов по изображению.
+ */
 class VisionTaggerClient
 {
     public function isEnabled(): bool
@@ -20,6 +23,7 @@ class VisionTaggerClient
 
         try {
             $base = (string) config('vision.url');
+            // Для URL .../tag автоматически проверяем .../health.
             $healthUrl = preg_replace('#/tag$#', '/health', $base) ?: $base;
             $response = Http::timeout(2)->acceptJson()->get($healthUrl);
 
@@ -56,6 +60,7 @@ class VisionTaggerClient
                 ->acceptJson()
                 ->attach('image', file_get_contents($absolutePath), basename($absolutePath))
                 ->post((string) config('vision.url'), [
+                    // Подсказки передаем JSON-строкой, чтобы сервис мог улучшить релевантность тегов.
                     'tag_hints' => $preparedHints === [] ? '' : json_encode($preparedHints, JSON_UNESCAPED_UNICODE),
                 ]);
 

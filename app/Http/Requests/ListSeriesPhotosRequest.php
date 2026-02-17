@@ -4,6 +4,9 @@ namespace App\Http\Requests;
 
 use Illuminate\Foundation\Http\FormRequest;
 
+/**
+ * Валидация параметров листинга фото (пагинация + сортировка).
+ */
 class ListSeriesPhotosRequest extends FormRequest
 {
     public function authorize(): bool

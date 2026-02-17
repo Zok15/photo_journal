@@ -18,12 +18,22 @@ use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
+/**
+ * Контроллер фотографий внутри серии.
+ *
+ * Отвечает за:
+ * - загрузку и удаление фото;
+ * - сортировку;
+ * - переименование;
+ * - пересборку тегов для серии.
+ */
 class SeriesPhotoController extends Controller
 {
     public function __construct(
         private PhotoBatchUploader $photoBatchUploader,
         private PhotoAutoTagger $photoAutoTagger
-    ) {}
+    ) {
+    }
 
     public function index(ListSeriesPhotosRequest $request, Series $series): JsonResponse
     {
@@ -118,12 +128,14 @@ class SeriesPhotoController extends Controller
         $normalizedSeriesPhotoIds = $seriesPhotoIds;
         sort($normalizedSeriesPhotoIds);
 
+        // Проверяем, что клиент прислал полный и корректный порядок фото серии.
         if ($photoIds !== $normalizedSeriesPhotoIds) {
             return response()->json([
                 'message' => 'photo_ids must contain all photos of the series exactly once.',
             ], 422);
         }
 
+        // Обновляем порядок атомарно, чтобы не оставить "половинчатое" состояние.
         DB::transaction(function () use ($series, $data): void {
             foreach ($data['photo_ids'] as $index => $photoId) {
                 $series->photos()
@@ -201,6 +213,7 @@ class SeriesPhotoController extends Controller
 
     private function ensureSeriesPhoto(Series $series, Photo $photo): void
     {
+        // Базовая защита от доступа к фото из чужой серии.
         if ($photo->series_id !== $series->id) {
             abort(404);
         }
@@ -208,6 +221,7 @@ class SeriesPhotoController extends Controller
 
     private function normalizeOriginalName(Photo $photo, string $input): string
     {
+        // Разрешаем менять только basename, расширение фиксируем по текущему файлу.
         $rawName = trim(pathinfo($input, PATHINFO_FILENAME));
         $baseName = $this->normalizeBaseName($rawName);
         $extension = $this->resolveLockedExtension($photo);

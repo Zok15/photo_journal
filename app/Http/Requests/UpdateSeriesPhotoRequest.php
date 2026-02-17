@@ -4,6 +4,9 @@ namespace App\Http\Requests;
 
 use Illuminate\Foundation\Http\FormRequest;
 
+/**
+ * Валидация обновления метаданных фотографии.
+ */
 class UpdateSeriesPhotoRequest extends FormRequest
 {
     public function authorize(): bool

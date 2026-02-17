@@ -12,11 +12,19 @@ use Illuminate\Support\Facades\DB;
 use RuntimeException;
 use Throwable;
 
+/**
+ * Джоба доставки одного события из outbox в интеграционный слой.
+ */
 class DispatchOutboxEvent implements ShouldQueue
 {
-    use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
+    use Dispatchable;
+    use InteractsWithQueue;
+    use Queueable;
+    use SerializesModels;
 
-    public function __construct(public int $outboxEventId) {}
+    public function __construct(public int $outboxEventId)
+    {
+    }
 
     public function handle(): void
     {
@@ -98,6 +106,7 @@ class DispatchOutboxEvent implements ShouldQueue
 
     public function failed(Throwable $e): void
     {
+        // Safety-net: если джоба упала вне handle, переводим событие в retry/failed.
         $event = OutboxEvent::query()->find($this->outboxEventId);
 
         if ($event === null || in_array($event->status, ['done', 'failed'], true)) {

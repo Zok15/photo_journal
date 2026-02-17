@@ -9,9 +9,14 @@ use Illuminate\Support\Facades\Storage;
 use RuntimeException;
 use Throwable;
 
+/**
+ * Сервис пакетной загрузки фотографий в конкретную серию.
+ */
 class PhotoBatchUploader
 {
-    public function __construct(private PhotoAutoTagger $photoAutoTagger) {}
+    public function __construct(private PhotoAutoTagger $photoAutoTagger)
+    {
+    }
 
     /**
      * @param array<int, UploadedFile> $files
@@ -42,6 +47,7 @@ class PhotoBatchUploader
                 $created[] = $photo;
 
                 try {
+                    // Автотеги — вспомогательная логика: не должны ронять загрузку фото.
                     $this->photoAutoTagger->attachPhotoTagsToSeries($series, $photo, $disk);
                 } catch (Throwable $e) {
                     // Auto-tagging must not break successful photo uploads.
@@ -52,6 +58,7 @@ class PhotoBatchUploader
                     ]);
                 }
             } catch (Throwable $e) {
+                // Если ошибка произошла после записи файла, удаляем "сироту" из storage.
                 if (is_string($path) && $path !== '') {
                     Storage::disk($disk)->delete($path);
 

@@ -12,4 +12,3 @@ if ($requested !== false && str_starts_with($requested, $publicPath) && is_file(
 }
 
 require $publicPath.'/index.php';
-

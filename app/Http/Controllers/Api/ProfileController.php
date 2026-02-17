@@ -8,10 +8,14 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
 
+/**
+ * Контроллер профиля текущего пользователя.
+ */
 class ProfileController extends Controller
 {
     public function show(Request $request): JsonResponse
     {
+        // Возвращаем пользователя из текущего токена.
         return response()->json([
             'data' => $request->user(),
         ]);
@@ -22,6 +26,7 @@ class ProfileController extends Controller
         /** @var User $user */
         $user = $request->user();
 
+        // Частичное обновление профиля (PATCH).
         $data = $request->validate([
             'name' => ['sometimes', 'required', 'string', 'max:255'],
             'journal_title' => ['sometimes', 'nullable', 'string', 'max:255'],

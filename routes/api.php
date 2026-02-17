@@ -7,14 +7,18 @@ use App\Http\Controllers\Api\SeriesPhotoController;
 use App\Http\Controllers\Api\TagController;
 use Illuminate\Support\Facades\Route;
 
+// Все API-эндпоинты проекта живут под /api/v1.
 Route::prefix('v1')->group(function () {
+    // Публичные маршруты авторизации (без токена).
     Route::post('auth/register', [AuthController::class, 'register'])->middleware('throttle:5,1');
     Route::post('auth/login', [AuthController::class, 'login'])->middleware('throttle:10,1');
 
+    // Защищенные маршруты (требуется Bearer-токен Sanctum).
     Route::middleware('auth:sanctum')->group(function () {
         Route::post('auth/logout', [AuthController::class, 'logout']);
         Route::get('profile', [ProfileController::class, 'show']);
         Route::patch('profile', [ProfileController::class, 'update']);
+        // Исторические alias для обратной совместимости.
         Route::get('auth/me', [ProfileController::class, 'show']);
         Route::patch('auth/me', [ProfileController::class, 'update']);
 

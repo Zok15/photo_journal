@@ -5,6 +5,10 @@ namespace App\Policies;
 use App\Models\Series;
 use App\Models\User;
 
+/**
+ * Политика доступа к сериям.
+ * Пользователь видит/меняет только свои серии.
+ */
 class SeriesPolicy
 {
     public function viewAny(User $user): bool
