@@ -64,6 +64,14 @@ class PhotoAutoTagger
         'woodpecker' => ['woodpecker', 'dyatel'],
     ];
 
+    private const ANIMAL_KEYWORDS = [
+        'animal' => [
+            'animal', 'fauna', 'creature', 'beast',
+            'dog', 'dogs', 'puppy', 'canine', 'sobaka', 'psina', 'pes', 'shchenok',
+            'cat', 'cats', 'kitten', 'feline', 'koshka', 'kot', 'kotik', 'kotenok',
+        ],
+    ];
+
     private const SEASON_KEYWORDS = [
         'winter' => ['winter', 'zima'],
         'spring' => ['spring', 'vesna'],
@@ -97,14 +105,14 @@ class PhotoAutoTagger
     /**
      * @return array<int, string>
      */
-    public function detectTagsForPhoto(Photo $photo, string $disk): array
+    public function detectTagsForPhoto(Photo $photo, string $disk, ?Series $series = null): array
     {
-        return $this->buildTagNames($photo, $disk);
+        return $this->buildTagNames($photo, $disk, $series);
     }
 
     public function attachPhotoTagsToSeries(Series $series, Photo $photo, string $disk): void
     {
-        $this->syncSeriesTags($series, $this->detectTagsForPhoto($photo, $disk), false);
+        $this->syncSeriesTags($series, $this->detectTagsForPhoto($photo, $disk, $series), false);
     }
 
     /**
@@ -129,6 +137,7 @@ class PhotoAutoTagger
 
         if ($replace) {
             $changes = $series->tags()->sync($ids);
+            $this->cleanupDetachedOrphanTags($changes['detached'] ?? []);
             if ($this->hasSyncChanges($changes)) {
                 $this->touchSeriesForCache($series);
             }
@@ -142,6 +151,29 @@ class PhotoAutoTagger
                 $this->touchSeriesForCache($series);
             }
         }
+    }
+
+    /**
+     * @param array<int, int|string> $tagIds
+     */
+    private function cleanupDetachedOrphanTags(array $tagIds): void
+    {
+        $ids = collect($tagIds)
+            ->filter(fn ($id): bool => is_int($id) || (is_string($id) && ctype_digit($id)))
+            ->map(fn ($id): int => (int) $id)
+            ->unique()
+            ->values()
+            ->all();
+
+        if ($ids === []) {
+            return;
+        }
+
+        Tag::query()
+            ->whereKey($ids)
+            ->doesntHave('series')
+            ->doesntHave('photos')
+            ->delete();
     }
 
     /**
@@ -165,7 +197,7 @@ class PhotoAutoTagger
     /**
      * @return array<int, string>
      */
-    private function buildTagNames(Photo $photo, string $disk): array
+    private function buildTagNames(Photo $photo, string $disk, ?Series $series = null): array
     {
         $all = [];
 
@@ -185,18 +217,63 @@ class PhotoAutoTagger
         }
 
         $all = [...$all, ...$this->tagsFromUploadMoment($photo)];
-        $all = [...$all, ...$this->visionTaggerClient->detectTags($disk, (string) $photo->path)];
 
+        $preparedBeforeVision = $this->normalizeAndDedupeTags($all);
+        $skipVisionThreshold = max(0, (int) config('vision.skip_if_tags_count_at_least', 7));
+
+        if ($skipVisionThreshold > 0 && $preparedBeforeVision->count() >= $skipVisionThreshold) {
+            return $preparedBeforeVision
+                ->take(self::MAX_TAGS)
+                ->values()
+                ->all();
+        }
+
+        $visionHints = $this->buildVisionHints($preparedBeforeVision, $series);
+        $all = [...$all, ...$this->visionTaggerClient->detectTags($disk, (string) $photo->path, $visionHints)];
+
+        return $this->normalizeAndDedupeTags($all)
+            ->take(self::MAX_TAGS)
+            ->values()
+            ->all();
+    }
+
+    /**
+     * @param \Illuminate\Support\Collection<int, string> $preparedBeforeVision
+     * @return array<int, string>
+     */
+    private function buildVisionHints(\Illuminate\Support\Collection $preparedBeforeVision, ?Series $series): array
+    {
+        $fromPhoto = $preparedBeforeVision
+            ->take(12)
+            ->values()
+            ->all();
+
+        $fromSeries = [];
+        if ($series !== null) {
+            $fromSeries = $series->tags()
+                ->pluck('name')
+                ->all();
+        }
+
+        return $this->normalizeAndDedupeTags([...$fromPhoto, ...$fromSeries])
+            ->take((int) config('vision.max_hints', 20))
+            ->values()
+            ->all();
+    }
+
+    /**
+     * @param array<int, mixed> $all
+     * @return \Illuminate\Support\Collection<int, string>
+     */
+    private function normalizeAndDedupeTags(array $all): \Illuminate\Support\Collection
+    {
         return collect($all)
             ->filter(fn ($value): bool => is_string($value) && $value !== '')
             ->map(fn (string $value): string => $this->normalizeTag($value))
             ->filter()
             ->filter(fn (string $value): bool => !$this->isRejectedNumericTag($value))
             ->filter(fn (string $value): bool => !in_array($value, self::STOPWORDS, true))
-            ->unique()
-            ->take(self::MAX_TAGS)
-            ->values()
-            ->all();
+            ->unique();
     }
 
     /**
@@ -351,9 +428,10 @@ class PhotoAutoTagger
         $colorTags = $this->mapKeywords($tokens, self::COLOR_KEYWORDS);
         $flowerTags = $this->mapKeywords($tokens, self::FLOWER_KEYWORDS);
         $birdTags = $this->mapKeywords($tokens, self::BIRD_KEYWORDS);
+        $animalTags = $this->mapKeywords($tokens, self::ANIMAL_KEYWORDS);
         $seasonTags = $this->mapKeywords($tokens, self::SEASON_KEYWORDS);
 
-        $tags = [...$tags, ...$colorTags, ...$flowerTags, ...$birdTags, ...$seasonTags];
+        $tags = [...$tags, ...$colorTags, ...$flowerTags, ...$birdTags, ...$animalTags, ...$seasonTags];
 
         if ($flowerTags !== []) {
             $tags[] = 'flower';
@@ -361,6 +439,10 @@ class PhotoAutoTagger
 
         if ($birdTags !== []) {
             $tags[] = 'bird';
+        }
+
+        if ($animalTags !== []) {
+            $tags[] = 'animal';
         }
 
         return array_values(array_unique($tags));

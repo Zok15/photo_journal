@@ -32,7 +32,7 @@ class VisionTaggerClient
     /**
      * @return array<int, string>
      */
-    public function detectTags(string $disk, string $path): array
+    public function detectTags(string $disk, string $path, array $tagHints = []): array
     {
         if (!$this->isEnabled()) {
             return [];
@@ -43,11 +43,21 @@ class VisionTaggerClient
             return [];
         }
 
+        $preparedHints = collect($tagHints)
+            ->filter(fn ($value): bool => is_string($value) && trim($value) !== '')
+            ->map(fn (string $value): string => trim($value))
+            ->unique()
+            ->take((int) config('vision.max_hints', 20))
+            ->values()
+            ->all();
+
         try {
             $response = Http::timeout((int) config('vision.timeout_seconds', 20))
                 ->acceptJson()
                 ->attach('image', file_get_contents($absolutePath), basename($absolutePath))
-                ->post((string) config('vision.url'));
+                ->post((string) config('vision.url'), [
+                    'tag_hints' => $preparedHints === [] ? '' : json_encode($preparedHints, JSON_UNESCAPED_UNICODE),
+                ]);
 
             if (!$response->ok()) {
                 return [];

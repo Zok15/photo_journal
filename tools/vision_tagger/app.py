@@ -1,65 +1,138 @@
-from fastapi import FastAPI, File, UploadFile
+from typing import Optional
+
+from fastapi import FastAPI, File, Form, UploadFile
 from PIL import Image
 from transformers import pipeline
+import json
+import os
 import re
 
 app = FastAPI(title="photo-journal-vision-tagger")
 
-# Free local zero-shot model. First run downloads weights once.
+try:
+    import torch
+    DEVICE = 0 if torch.cuda.is_available() else -1
+except Exception:
+    DEVICE = -1
+
 classifier = pipeline(
     task="zero-shot-image-classification",
     model="openai/clip-vit-base-patch32",
+    device=DEVICE,
 )
 
-# Stage 1: broad classes and global scene/color hints.
-BASE_LABELS = [
-    "bird", "flower", "tree", "plant", "leaf", "branch",
-    "nature", "macro", "wildlife",
-    "water", "sea", "lake", "river", "wetland",
-    "sky", "cloud", "sunset", "sunrise",
-    "forest", "woodland", "meadow", "field", "garden", "park",
-    "mountain", "hill", "shore", "beach", "snow", "ice",
-    "red", "orange", "yellow", "green", "blue", "purple", "pink", "white", "black", "brown",
-    "gray", "golden", "turquoise",
-    "winter", "spring", "summer", "autumn",
+# Stage 1: broad categories.
+CATEGORY_LABELS = [
+    # Living entities
+    "animal", "bird", "fish", "insect", "pet",
+    "person", "people", "portrait", "crowd",
+    "clothing", "food", "season", "timeOfDay",
+    "plant", "flower", "tree", "grass",
+    # Environments and scenes
+    "nature", "landscape", "forest", "mountain", "field", "park", "garden", "desert",
+    "beach", "sea", "lake", "river", "snow", "sky", "cloud",
+    "city", "street", "road", "building", "architecture", "bridge", "indoorScene", "outdoorScene",
+    "indoor", "outdoor", "daytime", "night",
+    # Object families
+    "vehicle", "bicycle", "motorcycle", "car", "bus", "train", "airplane", "boat",
+    "food", "drink", "furniture", "electronics", "computer", "phone", "camera",
+    "book", "bag", "toy", "sign", "text", "document",
+    # Visual style/meta
+    "macro", "closeup",
+    # Colors
+    "red", "orange", "yellow", "green", "blue", "purple", "pink", "white", "black", "brown", "gray",
 ]
 
-# Stage 2: species labels, only if coarse class is confident enough.
+# Stage 2: species-level labels by zoological group.
+MAMMAL_SPECIES_LABELS = [
+    "dog", "cat", "horse", "cow", "sheep", "goat", "pig",
+    "deer", "fox", "wolf", "bear", "rabbit", "squirrel", "hedgehog", "raccoon", "otter",
+    "dolphin", "whale", "seal",
+]
+
 BIRD_SPECIES_LABELS = [
-    # Bird families
-    "anatidae", "laridae", "ardeidae", "accipitridae", "falconidae",
-    "strigidae", "scolopacidae", "columbidae", "corvidae", "sturnidae",
-    "fringillidae", "paridae", "hirundinidae", "podicipedidae", "phalacrocoracidae",
-    "picidae", "sylviidae", "motacillidae",
-    # Species/common bird labels
-    "cormorant", "greatCormorant", "crane", "commonCrane", "sandhillCrane",
-    "heron", "greyHeron", "egret",
-    "seagull", "gull", "herringGull", "blackHeadedGull",
-    "crow", "raven", "jackdaw", "rook", "magpie",
-    "sparrow", "houseSparrow", "swallow", "swift", "starling",
-    "owl", "eagle", "kite", "hawk", "falcon", "osprey",
-    "duck", "mallard", "goose", "swan", "muteSwan", "grebe",
-    "pigeon", "dove", "stork", "pelican", "kingfisher", "woodpecker",
+    "eagle", "owl", "hawk", "duck", "goose", "swan", "pigeon", "sparrow", "crow", "seagull", "parrot",
+    "chicken", "rooster", "turkey",
 ]
 
-FLOWER_SPECIES_LABELS = [
-    # Flower families
-    "asteraceae", "rosaceae", "liliaceae", "orchidaceae", "ranunculaceae",
-    "fabaceae", "brassicaceae", "apiaceae", "caryophyllaceae", "iridaceae",
-    "amaryllidaceae", "poaceae", "lamiaceae",
-    # Species/common flower labels
-    "flower", "wildflower",
-    "rose", "tulip", "orchid", "lily", "waterLily",
-    "daisy", "sunflower", "crocus", "snowdrop", "peony",
-    "dandelion", "violet", "poppy", "iris", "lavender",
-    "chamomile", "bellflower", "anemone", "lotus",
+FISH_SPECIES_LABELS = [
+    "salmon", "trout", "carp", "catfish", "goldfish", "shark", "ray",
 ]
 
-MIN_SCORE_BASE = 0.22
-MIN_SCORE_SPECIES = 0.30
-BIRD_GATE = 0.27
-FLOWER_GATE = 0.27
-MAX_TAGS = 10
+INSECT_SPECIES_LABELS = [
+    "butterfly", "bee", "dragonfly", "ant", "beetle", "grasshopper", "mosquito",
+]
+
+REPTILE_AMPHIBIAN_SPECIES_LABELS = [
+    "lizard", "snake", "turtle", "frog", "toad", "crocodile",
+]
+
+LANDSCAPE_LABELS = [
+    "mountain", "forest", "beach", "desert", "river", "lake", "waterfall",
+    "countryside", "cityscape", "seascape", "snowyLandscape", "sunsetSky",
+]
+
+BUILDING_LABELS = [
+    "house", "apartmentBuilding", "skyscraper", "officeBuilding", "bridge",
+    "church", "castle", "temple", "tower", "interior", "exterior",
+]
+
+SEASON_LABELS = [
+    "spring", "summer", "autumn", "winter",
+]
+
+TIME_OF_DAY_LABELS = [
+    "dawn", "morning", "afternoon", "evening", "night", "sunrise", "sunset",
+]
+
+PEOPLE_LABELS = [
+    "man", "woman", "boy", "girl", "baby", "child", "teenager", "adult", "elderlyPerson",
+]
+
+CLOTHING_LABELS = [
+    "coat", "jacket", "dress", "shirt", "tShirt", "sweater", "jeans", "shorts",
+    "skirt", "suit", "uniform", "hat", "cap", "scarf", "glasses", "boots", "sneakers",
+]
+
+FOOD_LABELS = [
+    "fruit", "vegetable", "meat", "fishDish", "salad", "soup", "bread",
+    "pasta", "pizza", "burger", "cake", "dessert", "coffee", "tea",
+]
+
+REFINEMENT_GROUPS = {
+    "bird": BIRD_SPECIES_LABELS,
+    "fish": FISH_SPECIES_LABELS,
+    "insect": INSECT_SPECIES_LABELS,
+    "animal": MAMMAL_SPECIES_LABELS,
+    "pet": MAMMAL_SPECIES_LABELS,
+    "landscape": LANDSCAPE_LABELS,
+    "building": BUILDING_LABELS,
+    "architecture": BUILDING_LABELS,
+    "season": SEASON_LABELS,
+    "timeOfDay": TIME_OF_DAY_LABELS,
+    "daytime": TIME_OF_DAY_LABELS,
+    "night": TIME_OF_DAY_LABELS,
+    "person": PEOPLE_LABELS,
+    "people": PEOPLE_LABELS,
+    "clothing": CLOTHING_LABELS,
+    "food": FOOD_LABELS,
+}
+
+LIVING_GATE_LABELS = {"animal", "pet", "bird", "fish", "insect"}
+REFINEMENT_GATE_LABELS = {
+    "landscape", "building", "architecture", "season", "timeOfDay", "daytime", "night",
+    "person", "people", "clothing", "food",
+}
+
+MIN_SCORE = float(os.getenv("VISION_TAGGER_MIN_CONFIDENCE", "0.20"))
+MIN_SPECIES_SCORE = float(os.getenv("VISION_TAGGER_SPECIES_MIN_CONFIDENCE", "0.28"))
+ANIMAL_GATE = float(os.getenv("VISION_TAGGER_ANIMAL_GATE", "0.24"))
+REFINEMENT_GATE = float(os.getenv("VISION_TAGGER_REFINEMENT_GATE", str(ANIMAL_GATE)))
+SPECIES_RELATIVE_GATE = float(os.getenv("VISION_TAGGER_SPECIES_RELATIVE_GATE", "0.72"))
+MAX_SPECIES_PER_GROUP = int(os.getenv("VISION_TAGGER_MAX_SPECIES_PER_GROUP", "3"))
+HINT_SCORE_BOOST = float(os.getenv("VISION_TAGGER_HINT_BOOST", "0.06"))
+MAX_HINTS = int(os.getenv("VISION_TAGGER_MAX_HINTS", "20"))
+MAX_TAGS = int(os.getenv("VISION_TAGGER_MAX_TAGS", "10"))
 
 
 def to_camel(label: str) -> str:
@@ -73,7 +146,21 @@ def to_camel(label: str) -> str:
 
 def build_tag_alias_map() -> dict:
     aliases = {}
-    all_labels = [*BASE_LABELS, *BIRD_SPECIES_LABELS, *FLOWER_SPECIES_LABELS]
+    all_labels = [
+        *CATEGORY_LABELS,
+        *MAMMAL_SPECIES_LABELS,
+        *BIRD_SPECIES_LABELS,
+        *FISH_SPECIES_LABELS,
+        *INSECT_SPECIES_LABELS,
+        *REPTILE_AMPHIBIAN_SPECIES_LABELS,
+        *LANDSCAPE_LABELS,
+        *BUILDING_LABELS,
+        *SEASON_LABELS,
+        *TIME_OF_DAY_LABELS,
+        *PEOPLE_LABELS,
+        *CLOTHING_LABELS,
+        *FOOD_LABELS,
+    ]
 
     for label in all_labels:
         key = re.sub(r"[^A-Za-z0-9]+", "", str(label)).lower()
@@ -130,42 +217,136 @@ def classify_labels(pil: Image.Image, labels, threshold: float):
     return picked
 
 
-def top_score(candidates, tag: str) -> float:
+def filter_competitive(candidates, base_threshold: float):
+    if not candidates:
+        return []
+
+    best_score = max(score for _, score in candidates)
+    dynamic_threshold = max(base_threshold, best_score * SPECIES_RELATIVE_GATE)
+
+    return [(label, score) for label, score in candidates if score >= dynamic_threshold]
+
+
+def top_labels(candidates, limit: int):
+    ordered = sorted(candidates, key=lambda item: item[1], reverse=True)
+    if limit <= 0:
+        return ordered
+    return ordered[:limit]
+
+
+def top_score(candidates, labels) -> float:
+    lookup = set(labels) if not isinstance(labels, str) else {labels}
+    best = 0.0
+
     for label, score in candidates:
-        if label == tag:
-            return score
-    return 0.0
+        if label in lookup and score > best:
+            best = score
+
+    return best
+
+
+def parse_tag_hints(raw: Optional[str]) -> list[str]:
+    if raw is None:
+        return []
+
+    text = str(raw).strip()
+    if text == "":
+        return []
+
+    parsed = None
+    try:
+        parsed = json.loads(text)
+    except Exception:
+        parsed = None
+
+    if isinstance(parsed, list):
+        values = parsed
+    else:
+        values = [part.strip() for part in text.split(",")]
+
+    hints = []
+    for value in values:
+        if not isinstance(value, str):
+            continue
+        normalized = normalize_tag(value)
+        if normalized == "":
+            continue
+        hints.append(normalized)
+
+    deduped = []
+    seen = set()
+    for hint in hints:
+        if hint in seen:
+            continue
+        seen.add(hint)
+        deduped.append(hint)
+        if len(deduped) >= MAX_HINTS:
+            break
+
+    return deduped
 
 
 @app.get("/health")
 def health() -> dict:
-    return {"ok": True}
+    return {"ok": True, "device": DEVICE}
 
 
 @app.post("/tag")
-async def tag_image(image: UploadFile = File(...)) -> dict:
+async def tag_image(
+    image: UploadFile = File(...),
+    tag_hints: Optional[str] = Form(default=None),
+) -> dict:
     try:
         pil = Image.open(image.file).convert("RGB")
     except Exception:
         return {"tags": []}
 
-    tags_with_score = []
+    tags_with_score = classify_labels(pil, CATEGORY_LABELS, MIN_SCORE)
 
-    # Stage 1
-    base = classify_labels(pil, BASE_LABELS, MIN_SCORE_BASE)
-    tags_with_score.extend(base)
+    # Stage 2 for animals.
+    living_score = top_score(tags_with_score, LIVING_GATE_LABELS)
+    if living_score >= ANIMAL_GATE:
+        stage1_lookup = {label: score for label, score in tags_with_score}
+        for gate_label, group_labels in REFINEMENT_GROUPS.items():
+            if gate_label not in LIVING_GATE_LABELS:
+                continue
+            if stage1_lookup.get(gate_label, 0.0) < ANIMAL_GATE:
+                continue
 
-    # Stage 2 for birds
-    bird_score = top_score(base, "bird")
-    if bird_score >= BIRD_GATE:
-        bird_species = classify_labels(pil, BIRD_SPECIES_LABELS, MIN_SCORE_SPECIES)
-        tags_with_score.extend(bird_species)
+            group_candidates = classify_labels(pil, group_labels, MIN_SPECIES_SCORE)
+            group_candidates = filter_competitive(group_candidates, MIN_SPECIES_SCORE)
+            group_candidates = top_labels(group_candidates, MAX_SPECIES_PER_GROUP)
+            tags_with_score.extend(group_candidates)
 
-    # Stage 2 for flowers
-    flower_score = top_score(base, "flower")
-    if flower_score >= FLOWER_GATE:
-        flower_species = classify_labels(pil, FLOWER_SPECIES_LABELS, MIN_SCORE_SPECIES)
-        tags_with_score.extend(flower_species)
+        # Fallback: if only coarse "animal" is confident, also check reptiles/amphibians.
+        if stage1_lookup.get("animal", 0.0) >= ANIMAL_GATE and stage1_lookup.get("bird", 0.0) < ANIMAL_GATE:
+            reptile_candidates = classify_labels(
+                pil, REPTILE_AMPHIBIAN_SPECIES_LABELS, MIN_SPECIES_SCORE
+            )
+            reptile_candidates = filter_competitive(reptile_candidates, MIN_SPECIES_SCORE)
+            reptile_candidates = top_labels(reptile_candidates, MAX_SPECIES_PER_GROUP)
+            tags_with_score.extend(reptile_candidates)
+
+    # Stage 2 for non-animal domains (landscape/building/people/clothing/food/season/time).
+    stage1_lookup = {label: score for label, score in tags_with_score}
+    for gate_label, group_labels in REFINEMENT_GROUPS.items():
+        if gate_label not in REFINEMENT_GATE_LABELS:
+            continue
+        if stage1_lookup.get(gate_label, 0.0) < REFINEMENT_GATE:
+            continue
+
+        group_candidates = classify_labels(pil, group_labels, MIN_SPECIES_SCORE)
+        group_candidates = filter_competitive(group_candidates, MIN_SPECIES_SCORE)
+        group_candidates = top_labels(group_candidates, MAX_SPECIES_PER_GROUP)
+        tags_with_score.extend(group_candidates)
+
+    # Optional hint rerank: gently prefer already existing tags when they are present.
+    hints = parse_tag_hints(tag_hints)
+    if hints:
+        hint_threshold = max(MIN_SCORE * 0.7, 0.12)
+        hinted = classify_labels(pil, hints, hint_threshold)
+        boosted = [(label, min(1.0, score + HINT_SCORE_BOOST)) for label, score in hinted]
+        tags_with_score.extend(boosted)
 
     # Deduplicate by max confidence per tag.
     best = {}

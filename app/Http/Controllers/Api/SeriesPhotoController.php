@@ -261,12 +261,12 @@ class SeriesPhotoController extends Controller
 
         $series->photos()
             ->orderBy('id')
-            ->chunkById(100, function ($photos) use ($disk, &$processed, &$failed, &$allTagNames): void {
+            ->chunkById(100, function ($photos) use ($series, $disk, &$processed, &$failed, &$allTagNames): void {
                 foreach ($photos as $photo) {
                     try {
                         $allTagNames = [
                             ...$allTagNames,
-                            ...$this->photoAutoTagger->detectTagsForPhoto($photo, $disk),
+                            ...$this->photoAutoTagger->detectTagsForPhoto($photo, $disk, $series),
                         ];
                         $processed++;
                     } catch (\Throwable) {

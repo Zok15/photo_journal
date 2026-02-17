@@ -122,6 +122,27 @@ class SeriesPhotoUploadTest extends TestCase
         $this->assertNotContains('bird4', $tagNames);
     }
 
+    public function test_upload_extracts_animal_category_from_filename_tokens(): void
+    {
+        config()->set('filesystems.default', 'local');
+        Storage::fake('local');
+
+        $series = Series::query()->create([
+            'user_id' => $this->user->id,
+            'title' => 'Dogs',
+            'description' => 'Dog set',
+        ]);
+
+        $response = $this->post("/api/v1/series/{$series->id}/photos", [
+            'photos' => [$this->fakeImage('happy-dog-puppy.jpg')],
+        ]);
+
+        $response->assertCreated();
+
+        $tagNames = $series->fresh()->load('tags')->tags->pluck('name')->all();
+        $this->assertContains('animal', $tagNames);
+    }
+
     public function test_retag_endpoint_rebuilds_auto_tags_for_series_photos(): void
     {
         config()->set('filesystems.default', 'local');
@@ -179,6 +200,7 @@ class SeriesPhotoUploadTest extends TestCase
         $names = $series->fresh()->load('tags')->tags->pluck('name')->all();
         $this->assertNotContains('2427', $names);
         $this->assertContains('2026', $names);
+        $this->assertDatabaseMissing('tags', ['name' => '2427']);
     }
 
     public function test_retag_endpoint_removes_low_value_orientation_tags(): void
@@ -205,6 +227,7 @@ class SeriesPhotoUploadTest extends TestCase
 
         $names = $series->fresh()->load('tags')->tags->pluck('name')->all();
         $this->assertNotContains('portrait', $names);
+        $this->assertDatabaseMissing('tags', ['name' => 'portrait']);
     }
 
     public function test_index_returns_only_photos_for_series(): void
