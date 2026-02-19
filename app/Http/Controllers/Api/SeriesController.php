@@ -7,6 +7,7 @@ use App\Http\Requests\StoreSeriesWithPhotosRequest;
 use App\Jobs\ProcessSeries;
 use App\Models\Series;
 use App\Models\Tag;
+use App\Models\User;
 use App\Services\PhotoBatchUploader;
 use App\Support\SeriesResponseCache;
 use Illuminate\Database\QueryException;
@@ -148,6 +149,204 @@ class SeriesController extends Controller
 
         // Возвращаем ответ с ETag/Last-Modified для условного кеширования на клиенте.
         return $this->respondWithConditionalJson($request, $payload, $lastModified);
+    }
+
+    public function publicIndex(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
+            'page' => ['nullable', 'integer', 'min:1'],
+            'search' => ['nullable', 'string', 'max:255'],
+            'tag' => ['nullable', 'string', 'max:255'],
+            'author_id' => ['nullable', 'integer', 'exists:users,id'],
+            'date_from' => ['nullable', 'date'],
+            'date_to' => ['nullable', 'date'],
+            'sort' => ['nullable', 'in:new,old'],
+        ]);
+
+        $perPage = $validated['per_page'] ?? 15;
+        $query = Series::query()
+            ->where('is_public', true)
+            ->with(['tags', 'user:id,name'])
+            ->withCount('photos');
+        $calendarDatesQuery = Series::query()
+            ->where('is_public', true);
+
+        $search = trim((string) ($validated['search'] ?? ''));
+        if ($search !== '') {
+            $query->where(function ($builder) use ($search): void {
+                $builder
+                    ->where('title', 'like', '%'.$search.'%')
+                    ->orWhere('description', 'like', '%'.$search.'%');
+            });
+            $calendarDatesQuery->where(function ($builder) use ($search): void {
+                $builder
+                    ->where('title', 'like', '%'.$search.'%')
+                    ->orWhere('description', 'like', '%'.$search.'%');
+            });
+        }
+
+        $tagFilter = trim((string) ($validated['tag'] ?? ''));
+        if ($tagFilter !== '') {
+            $tags = collect(explode(',', $tagFilter))
+                ->map(fn ($tag): string => Tag::normalizeTagName((string) $tag))
+                ->filter()
+                ->unique()
+                ->values()
+                ->all();
+
+            foreach ($tags as $tagName) {
+                $query->whereHas('tags', function ($builder) use ($tagName): void {
+                    $builder->where('name', $tagName);
+                });
+                $calendarDatesQuery->whereHas('tags', function ($builder) use ($tagName): void {
+                    $builder->where('name', $tagName);
+                });
+            }
+        }
+
+        $calendarDates = $calendarDatesQuery
+            ->selectRaw('DATE(created_at) as date_key')
+            ->distinct()
+            ->orderBy('date_key')
+            ->pluck('date_key')
+            ->filter()
+            ->values()
+            ->all();
+
+        $dateFrom = $validated['date_from'] ?? null;
+        $dateTo = $validated['date_to'] ?? null;
+        if ($dateFrom !== null) {
+            $query->whereDate('created_at', '>=', $dateFrom);
+        }
+        if ($dateTo !== null) {
+            $query->whereDate('created_at', '<=', $dateTo);
+        }
+
+        $authorId = isset($validated['author_id']) ? (int) $validated['author_id'] : null;
+        if ($authorId !== null) {
+            $query->where('user_id', $authorId);
+            $calendarDatesQuery->where('user_id', $authorId);
+        }
+
+        $sort = $validated['sort'] ?? null;
+        if ($sort === 'old') {
+            $query->oldest();
+        } else {
+            $query->latest();
+        }
+
+        $paginator = $query->paginate($perPage)->withQueryString();
+        $collection = $paginator->getCollection();
+        $previewMap = $this->buildSeriesPreviewMap($collection);
+
+        $paginator->setCollection($collection->map(function (Series $series) use ($previewMap): array {
+            $data = $series->toArray();
+            $data['preview_photos'] = $previewMap[(int) $series->id] ?? [];
+            $data['owner_name'] = (string) ($series->user?->name ?? '');
+
+            return $data;
+        }));
+
+        $payload = $paginator->toArray();
+        $payload['calendar_dates'] = $calendarDates;
+        $payload['authors'] = User::query()
+            ->select('users.id', 'users.name')
+            ->join('series', 'series.user_id', '=', 'users.id')
+            ->where('series.is_public', true)
+            ->whereNotNull('users.name')
+            ->distinct()
+            ->orderBy('users.name')
+            ->get()
+            ->map(fn (User $user): array => [
+                'id' => (int) $user->id,
+                'name' => (string) $user->name,
+            ])
+            ->values()
+            ->all();
+        $payload['available_tags'] = Tag::query()
+            ->whereHas('series', function ($builder): void {
+                $builder->where('series.is_public', true);
+            })
+            ->orderBy('name')
+            ->get(['id', 'name'])
+            ->map(fn (Tag $tag): array => [
+                'id' => (int) $tag->id,
+                'name' => (string) $tag->name,
+            ])
+            ->values()
+            ->all();
+
+        $seriesTable = (new Series())->getTable();
+        $lastModified = $this->latestTimestamp(
+            (clone $query)->max($seriesTable.'.updated_at'),
+            DB::table('photos')
+                ->join($seriesTable, $seriesTable.'.id', '=', 'photos.series_id')
+                ->where($seriesTable.'.is_public', true)
+                ->max('photos.updated_at'),
+            DB::table('series_tag')
+                ->join($seriesTable, $seriesTable.'.id', '=', 'series_tag.series_id')
+                ->join('tags', 'tags.id', '=', 'series_tag.tag_id')
+                ->where($seriesTable.'.is_public', true)
+                ->max('tags.updated_at'),
+        );
+
+        return $this->respondWithConditionalJson($request, $payload, $lastModified);
+    }
+
+    public function publicShow(Request $request, Series $series): JsonResponse
+    {
+        if (! (bool) $series->is_public) {
+            abort(404);
+        }
+
+        $validated = $request->validate([
+            'include_photos' => ['nullable', 'boolean'],
+            'photos_limit' => ['nullable', 'integer', 'min:1', 'max:300'],
+        ]);
+        $includePhotos = $request->boolean('include_photos', true);
+
+        if ($includePhotos) {
+            $limit = $validated['photos_limit'] ?? 120;
+            $disk = config('filesystems.default');
+
+            $series->load([
+                'photos' => fn ($query) => $query
+                    ->orderByRaw('sort_order IS NULL')
+                    ->orderBy('sort_order')
+                    ->latest()
+                    ->limit($limit),
+            ]);
+
+            $series->photos->each(function ($photo) use ($disk): void {
+                $photo->setAttribute('preview_url', $this->resolvePhotoPreviewUrl($disk, $photo->path));
+                $photo->setAttribute('public_url', $this->resolvePhotoPublicUrl($disk, $photo->path));
+            });
+        }
+
+        $series->loadCount('photos')->load(['tags', 'user:id,name']);
+        $data = $series->toArray();
+        $data['owner_name'] = (string) ($series->user?->name ?? '');
+
+        $payload = [
+            'data' => $data,
+        ];
+
+        $lastModified = $this->latestTimestamp(
+            $series->updated_at,
+            $series->photos()->max('updated_at'),
+            $series->tags()->max('tags.updated_at'),
+        );
+
+        if ($includePhotos) {
+            return response()
+                ->json($payload)
+                ->header('Cache-Control', 'public, no-store')
+                ->header('Vary', 'Accept');
+        }
+
+        return $this->respondWithConditionalJson($request, $payload, $lastModified)
+            ->header('Vary', 'Accept');
     }
 
     public function store(StoreSeriesWithPhotosRequest $request): JsonResponse

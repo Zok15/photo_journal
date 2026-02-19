@@ -12,6 +12,8 @@ Route::prefix('v1')->group(function () {
     // Публичные маршруты авторизации (без токена).
     Route::post('auth/register', [AuthController::class, 'register'])->middleware('throttle:5,1');
     Route::post('auth/login', [AuthController::class, 'login'])->middleware('throttle:10,1');
+    Route::get('public/series', [SeriesController::class, 'publicIndex']);
+    Route::get('public/series/{series}', [SeriesController::class, 'publicShow']);
 
     // Защищенные маршруты (требуется Bearer-токен Sanctum).
     Route::middleware('auth:sanctum')->group(function () {
