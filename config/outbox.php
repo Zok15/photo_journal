@@ -18,10 +18,17 @@ return [
     | max_backoff_seconds:
     |   Upper cap for retry delay to avoid unbounded waits.
     |
+    | processing_stale_seconds:
+    |   If an event stays in "processing" longer than this threshold,
+    |   outbox:poll treats it as stale and recovers it:
+    |   - back to "pending" when attempts < max_attempts
+    |   - to "failed" when attempts >= max_attempts
+    |
     */
     'retry' => [
         'max_attempts' => (int) env('OUTBOX_MAX_ATTEMPTS', 5),
         'base_backoff_seconds' => (int) env('OUTBOX_BACKOFF_BASE_SECONDS', 60),
         'max_backoff_seconds' => (int) env('OUTBOX_BACKOFF_MAX_SECONDS', 3600),
+        'processing_stale_seconds' => (int) env('OUTBOX_PROCESSING_STALE_SECONDS', 900),
     ],
 ];
