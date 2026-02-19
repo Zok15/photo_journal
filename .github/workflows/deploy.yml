@@ -51,6 +51,8 @@ jobs:
           BACKEND_PATH: ${{ secrets.BACKEND_PATH }}
           PHP_FPM_SERVICE: ${{ secrets.PHP_FPM_SERVICE }}
           QUEUE_WORKER_SERVICE: ${{ secrets.QUEUE_WORKER_SERVICE }}
+          SCHEDULER_SERVICE: ${{ secrets.SCHEDULER_SERVICE }}
+          APP_SERVICE_GROUP: ${{ secrets.APP_SERVICE_GROUP }}
           VISION_TAGGER_SERVICE: ${{ secrets.VISION_TAGGER_SERVICE }}
           VISION_TAGGER_GROUP: ${{ secrets.VISION_TAGGER_GROUP }}
           DEPLOY_USER: ${{ secrets.SSH_USER }}
@@ -93,6 +95,7 @@ jobs:
           SERVICE_NAME="${VISION_TAGGER_SERVICE:-vision-tagger}"
           SERVICE_GROUP="${VISION_TAGGER_GROUP:-www-data}"
           SERVICE_UNIT="/etc/systemd/system/${SERVICE_NAME}.service"
+          APP_GROUP="${APP_SERVICE_GROUP:-www-data}"
 
           $SUDO tee "$SERVICE_UNIT" >/dev/null <<SERVICE
           [Unit]
@@ -124,7 +127,7 @@ jobs:
           [Service]
           Type=simple
           User=${DEPLOY_USER}
-          Group=www-data
+          Group=${APP_GROUP}
           WorkingDirectory=${BACKEND_PATH}
           ExecStart=/usr/bin/php artisan queue:work --sleep=1 --tries=3 --max-time=3600
           ExecReload=/usr/bin/php artisan queue:restart
@@ -135,6 +138,36 @@ jobs:
           WantedBy=multi-user.target
           SERVICE
 
+          SCHEDULER_SERVICE_NAME="${SCHEDULER_SERVICE:-photo-journal-scheduler}"
+          SCHEDULER_UNIT="/etc/systemd/system/${SCHEDULER_SERVICE_NAME}.service"
+          SCHEDULER_TIMER_UNIT="/etc/systemd/system/${SCHEDULER_SERVICE_NAME}.timer"
+
+          $SUDO tee "$SCHEDULER_UNIT" >/dev/null <<SERVICE
+          [Unit]
+          Description=Photo Journal Laravel Scheduler Runner
+          After=network.target
+
+          [Service]
+          Type=oneshot
+          User=${DEPLOY_USER}
+          Group=${APP_GROUP}
+          WorkingDirectory=${BACKEND_PATH}
+          ExecStart=/usr/bin/php artisan schedule:run
+          SERVICE
+
+          $SUDO tee "$SCHEDULER_TIMER_UNIT" >/dev/null <<SERVICE
+          [Unit]
+          Description=Run Photo Journal scheduler every minute
+
+          [Timer]
+          OnCalendar=*-*-* *:*:00
+          Persistent=true
+          Unit=${SCHEDULER_SERVICE_NAME}.service
+
+          [Install]
+          WantedBy=timers.target
+          SERVICE
+
           $SUDO systemctl daemon-reload
           $SUDO systemctl enable --now "$SERVICE_NAME"
           $SUDO systemctl restart "$SERVICE_NAME"
@@ -142,8 +175,11 @@ jobs:
           $SUDO systemctl enable --now "$QUEUE_SERVICE_NAME"
           $SUDO systemctl restart "$QUEUE_SERVICE_NAME"
           $SUDO systemctl --no-pager -l status "$QUEUE_SERVICE_NAME" || true
+          $SUDO systemctl enable --now "${SCHEDULER_SERVICE_NAME}.timer"
+          $SUDO systemctl restart "${SCHEDULER_SERVICE_NAME}.timer"
+          $SUDO systemctl --no-pager -l status "${SCHEDULER_SERVICE_NAME}.timer" || true
           REMOTE
 
           ssh -p ${{ secrets.SSH_PORT }} -o StrictHostKeyChecking=no \
             ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} \
-            "BACKEND_PATH='${BACKEND_PATH}' PHP_FPM_SERVICE='${PHP_FPM_SERVICE}' QUEUE_WORKER_SERVICE='${QUEUE_WORKER_SERVICE}' VISION_TAGGER_SERVICE='${VISION_TAGGER_SERVICE}' VISION_TAGGER_GROUP='${VISION_TAGGER_GROUP}' DEPLOY_USER='${DEPLOY_USER}' bash -se" < /tmp/remote_deploy.sh
+            "BACKEND_PATH='${BACKEND_PATH}' PHP_FPM_SERVICE='${PHP_FPM_SERVICE}' QUEUE_WORKER_SERVICE='${QUEUE_WORKER_SERVICE}' SCHEDULER_SERVICE='${SCHEDULER_SERVICE}' APP_SERVICE_GROUP='${APP_SERVICE_GROUP}' VISION_TAGGER_SERVICE='${VISION_TAGGER_SERVICE}' VISION_TAGGER_GROUP='${VISION_TAGGER_GROUP}' DEPLOY_USER='${DEPLOY_USER}' bash -se" < /tmp/remote_deploy.sh
