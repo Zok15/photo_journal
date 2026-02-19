@@ -25,9 +25,13 @@ class TagController extends Controller
 
         $query = trim((string) ($data['q'] ?? ''));
         $limit = (int) ($data['limit'] ?? 200);
+        $userId = (int) $request->user()->id;
 
         $tagsQuery = Tag::query()
             ->select(['id', 'name'])
+            ->whereHas('series', function ($builder) use ($userId): void {
+                $builder->where('series.user_id', $userId);
+            })
             ->orderBy('name')
             ->limit($limit);
 
