@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\StoreSeriesWithPhotosRequest;
 use App\Jobs\ProcessSeries;
+use App\Jobs\SyncSeriesAutoTags;
 use App\Models\Series;
 use App\Models\Tag;
 use App\Models\User;
@@ -379,6 +380,7 @@ class SeriesController extends Controller
         }
 
         ProcessSeries::dispatch($series->id);
+        SyncSeriesAutoTags::dispatch($series->id);
         // Инвалидация версий кеша после создания серии.
         $this->invalidateSeriesCaches($request->user()->id, $series);
 
@@ -387,6 +389,7 @@ class SeriesController extends Controller
             'status' => 'queued',
             'photos_created' => $created,
             'photos_failed' => $failed,
+            'tags_sync' => 'queued',
         ], 201);
     }
 

@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\ListSeriesPhotosRequest;
 use App\Http\Requests\StoreSeriesPhotosRequest;
 use App\Http\Requests\UpdateSeriesPhotoRequest;
+use App\Jobs\SyncSeriesAutoTags;
 use App\Models\Photo;
 use App\Models\Series;
 use App\Services\PhotoAutoTagger;
@@ -73,11 +74,13 @@ class SeriesPhotoController extends Controller
             ], 422);
         }
 
+        SyncSeriesAutoTags::dispatch($series->id);
         $this->invalidateSeriesCaches($series);
 
         return response()->json([
             'photos_created' => $created,
             'photos_failed' => $failed,
+            'tags_sync' => 'queued',
         ], 201);
     }
 

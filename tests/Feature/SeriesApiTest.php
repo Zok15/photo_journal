@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Jobs\ProcessSeries;
+use App\Jobs\SyncSeriesAutoTags;
 use App\Models\Photo;
 use App\Models\Series;
 use App\Models\Tag;
@@ -103,6 +104,7 @@ class SeriesApiTest extends TestCase
 
         $response->assertCreated();
         $response->assertJsonPath('status', 'queued');
+        $response->assertJsonPath('tags_sync', 'queued');
         $response->assertJsonCount(1, 'photos_created');
         $response->assertJsonCount(0, 'photos_failed');
         $this->assertDatabaseHas('series', [
@@ -114,6 +116,7 @@ class SeriesApiTest extends TestCase
         ]);
 
         Queue::assertPushed(ProcessSeries::class, 1);
+        Queue::assertPushed(SyncSeriesAutoTags::class, 1);
     }
 
     public function test_store_can_mark_series_as_public(): void

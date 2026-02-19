@@ -4,7 +4,6 @@ namespace App\Services;
 
 use App\Models\Series;
 use Illuminate\Http\UploadedFile;
-use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use RuntimeException;
 use Throwable;
@@ -14,10 +13,6 @@ use Throwable;
  */
 class PhotoBatchUploader
 {
-    public function __construct(private PhotoAutoTagger $photoAutoTagger)
-    {
-    }
-
     /**
      * @param array<int, UploadedFile> $files
      * @return array{created: array<int, mixed>, failed: array<int, array{original_name: string, error_code: string, message: string}>}
@@ -45,18 +40,6 @@ class PhotoBatchUploader
                 ]);
 
                 $created[] = $photo;
-
-                try {
-                    // Автотеги — вспомогательная логика: не должны ронять загрузку фото.
-                    $this->photoAutoTagger->attachPhotoTagsToSeries($series, $photo, $disk);
-                } catch (Throwable $e) {
-                    // Auto-tagging must not break successful photo uploads.
-                    Log::warning('Photo auto-tagging failed', [
-                        'photo_id' => $photo->id,
-                        'series_id' => $series->id,
-                        'error' => $e->getMessage(),
-                    ]);
-                }
             } catch (Throwable $e) {
                 // Если ошибка произошла после записи файла, удаляем "сироту" из storage.
                 if (is_string($path) && $path !== '') {

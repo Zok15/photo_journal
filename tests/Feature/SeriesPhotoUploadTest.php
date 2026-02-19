@@ -2,11 +2,13 @@
 
 namespace Tests\Feature;
 
+use App\Jobs\SyncSeriesAutoTags;
 use App\Models\Series;
 use App\Models\Tag;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Storage;
 use Laravel\Sanctum\Sanctum;
 use Tests\TestCase;
@@ -27,6 +29,7 @@ class SeriesPhotoUploadTest extends TestCase
 
     public function test_upload_photos_creates_records_and_stores_files(): void
     {
+        Queue::fake();
         config()->set('filesystems.default', 'local');
         Storage::fake('local');
 
@@ -46,6 +49,7 @@ class SeriesPhotoUploadTest extends TestCase
         ]);
 
         $response->assertCreated();
+        $response->assertJsonPath('tags_sync', 'queued');
         $response->assertJsonCount(2, 'photos_created');
         $response->assertJsonCount(0, 'photos_failed');
 
@@ -66,6 +70,8 @@ class SeriesPhotoUploadTest extends TestCase
         foreach ($storedPaths as $path) {
             Storage::disk('local')->assertExists($path);
         }
+
+        Queue::assertPushed(SyncSeriesAutoTags::class, 1);
     }
 
     public function test_upload_assigns_auto_tags_from_file_name(): void
