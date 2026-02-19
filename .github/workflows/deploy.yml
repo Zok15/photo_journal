@@ -20,18 +20,27 @@ jobs:
         with:
           php-version: "8.3"
           tools: composer:v2
+          coverage: none
 
-      # 3. Composer sanity check (CI)
+      # 3. Debug PHP/Composer versions (to confirm runner uses PHP 8.3)
+      - name: Debug PHP version
+        run: |
+          php -v
+          which php
+          composer -V
+          php -m | head -n 30
+
+      # 4. Composer sanity check (CI)
       - name: Composer install (CI sanity)
         run: composer install --no-interaction --no-progress --prefer-dist
 
-      # 4. Load SSH key into agent
+      # 5. Load SSH key into agent
       - name: Add SSH key
         uses: webfactory/ssh-agent@v0.9.0
         with:
           ssh-private-key: ${{ secrets.SSH_KEY }}
 
-      # 5. Rsync project to server
+      # 6. Rsync project to server
       - name: Deploy code to server (rsync)
         run: |
           rsync -az --delete \
@@ -44,7 +53,7 @@ jobs:
             -e "ssh -p ${{ secrets.SSH_PORT }} -o StrictHostKeyChecking=no" \
             ./ ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:${{ secrets.BACKEND_PATH }}/
 
-      # 6. Run Laravel commands on server
+      # 7. Run Laravel commands on server
       - name: Run Laravel commands on server
         env:
           BACKEND_PATH: ${{ secrets.BACKEND_PATH }}
