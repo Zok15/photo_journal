@@ -6,6 +6,8 @@ use App\Models\Photo;
 use App\Models\Series;
 use App\Models\Tag;
 use Illuminate\Database\QueryException;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 
@@ -147,23 +149,60 @@ class PhotoAutoTagger
             ->pluck('id')
             ->all();
 
-        if ($replace) {
-            // Полная синхронизация: удаляем старые связи, добавляем новые.
-            $changes = $series->tags()->sync($ids);
-            $this->cleanupDetachedOrphanTags($changes['detached'] ?? []);
-            if ($this->hasSyncChanges($changes)) {
-                $this->touchSeriesForCache($series);
-            }
+        $tagIds = collect($ids)
+            ->map(fn ($id): int => (int) $id)
+            ->unique()
+            ->values()
+            ->all();
 
-            return;
+        $existingRows = DB::table('series_tag')
+            ->where('series_id', $series->id)
+            ->get(['tag_id', 'source']);
+
+        $allAttachedIds = $existingRows
+            ->map(fn ($row): int => (int) $row->tag_id)
+            ->unique()
+            ->values()
+            ->all();
+
+        $existingAutoIds = $existingRows
+            ->filter(fn ($row): bool => (string) ($row->source ?? 'manual') === 'auto')
+            ->map(fn ($row): int => (int) $row->tag_id)
+            ->unique()
+            ->values()
+            ->all();
+
+        $attached = [];
+        $detached = [];
+
+        if ($replace) {
+            $detached = array_values(array_diff($existingAutoIds, $tagIds));
+            if ($detached !== []) {
+                DB::table('series_tag')
+                    ->where('series_id', $series->id)
+                    ->where('source', 'auto')
+                    ->whereIn('tag_id', $detached)
+                    ->delete();
+                $this->cleanupDetachedOrphanTags($detached);
+            }
         }
 
-        if ($ids !== []) {
-            // Мягкая синхронизация: только добавляем отсутствующие теги.
-            $changes = $series->tags()->syncWithoutDetaching($ids);
-            if ($this->hasSyncChanges($changes)) {
-                $this->touchSeriesForCache($series);
-            }
+        $toAttach = array_values(array_diff($tagIds, $allAttachedIds));
+        if ($toAttach !== []) {
+            DB::table('series_tag')->insert(
+                collect($toAttach)
+                    ->map(fn (int $tagId): array => [
+                        'series_id' => $series->id,
+                        'tag_id' => $tagId,
+                        'source' => 'auto',
+                    ])
+                    ->all()
+            );
+            $attached = $toAttach;
+        }
+
+        if ($attached !== [] || $detached !== []) {
+            $this->touchSeriesForCache($series);
         }
     }
 
@@ -270,7 +309,19 @@ class PhotoAutoTagger
                 ->all();
         }
 
-        return $this->normalizeAndDedupeTags([...$fromPhoto, ...$fromSeries])
+        $fromGlobal = Cache::remember('vision:global-tag-hints:v1', now()->addMinutes(5), function (): array {
+            return Tag::query()
+                ->select('tags.name')
+                ->leftJoin('series_tag', 'series_tag.tag_id', '=', 'tags.id')
+                ->groupBy('tags.id', 'tags.name')
+                ->orderByRaw('COUNT(series_tag.id) DESC')
+                ->orderByDesc('tags.updated_at')
+                ->limit(100)
+                ->pluck('tags.name')
+                ->all();
+        });
+
+        return $this->normalizeAndDedupeTags([...$fromPhoto, ...$fromSeries, ...$fromGlobal])
             ->take((int) config('vision.max_hints', 20))
             ->values()
             ->all();

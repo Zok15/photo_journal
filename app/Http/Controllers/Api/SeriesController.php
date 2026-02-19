@@ -503,10 +503,40 @@ class SeriesController extends Controller
             ], 422);
         }
 
-        $tags = collect($names)->map(fn (string $name): Tag => $this->findOrCreateTagSafely($name));
+        $tagIds = collect($names)
+            ->map(fn (string $name): Tag => $this->findOrCreateTagSafely($name))
+            ->pluck('id')
+            ->map(fn ($id): int => (int) $id)
+            ->unique()
+            ->values()
+            ->all();
 
-        $changes = $series->tags()->syncWithoutDetaching($tags->pluck('id')->all());
-        if (! empty($changes['attached'] ?? []) || ! empty($changes['detached'] ?? []) || ! empty($changes['updated'] ?? [])) {
+        $existingIds = DB::table('series_tag')
+            ->where('series_id', $series->id)
+            ->pluck('tag_id')
+            ->map(fn ($id): int => (int) $id)
+            ->all();
+
+        $toAttach = array_values(array_diff($tagIds, $existingIds));
+        if ($toAttach !== []) {
+            DB::table('series_tag')->insert(
+                collect($toAttach)
+                    ->map(fn (int $tagId): array => [
+                        'series_id' => $series->id,
+                        'tag_id' => $tagId,
+                        'source' => 'manual',
+                    ])
+                    ->all()
+            );
+        }
+
+        $forcedManual = DB::table('series_tag')
+            ->where('series_id', $series->id)
+            ->whereIn('tag_id', $tagIds)
+            ->where('source', '!=', 'manual')
+            ->update(['source' => 'manual']);
+
+        if ($toAttach !== [] || $forcedManual > 0) {
             $this->touchSeriesForCache($series);
         }
 

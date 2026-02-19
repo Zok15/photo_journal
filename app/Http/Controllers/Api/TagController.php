@@ -58,19 +58,23 @@ class TagController extends Controller
         $query = trim((string) ($data['q'] ?? ''));
         $limit = (int) ($data['limit'] ?? 8);
 
-        if ($query === '') {
-            // Пустой запрос не нагружает БД и сразу возвращает пустой список.
-            return response()->json(['data' => []]);
-        }
-
-        $prefix = mb_substr($query, 0, 64);
-
         $tags = Tag::query()
             ->select(['id', 'name'])
-            ->where('name', 'like', $prefix.'%')
-            ->orderBy('name')
+            ->when($query !== '', function ($builder) use ($query): void {
+                $needle = '%'.mb_substr($query, 0, 64).'%';
+                $builder->where('name', 'like', $needle);
+            }, function ($builder): void {
+                $builder
+                    ->leftJoin('series_tag', 'series_tag.tag_id', '=', 'tags.id')
+                    ->groupBy('tags.id', 'tags.name')
+                    ->orderByRaw('COUNT(series_tag.id) DESC')
+                    ->orderBy('tags.name');
+            })
+            ->when($query !== '', function ($builder): void {
+                $builder->orderBy('name');
+            })
             ->limit($limit)
-            ->get();
+            ->get(['tags.id', 'tags.name']);
 
         return response()->json([
             'data' => $tags,
