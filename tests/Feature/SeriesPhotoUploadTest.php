@@ -212,6 +212,35 @@ class SeriesPhotoUploadTest extends TestCase
         $this->assertContains('2026', $names);
     }
 
+    public function test_upload_and_retag_work_with_slug_route_key(): void
+    {
+        config()->set('filesystems.default', 'local');
+        Storage::fake('local');
+
+        $series = Series::query()->create([
+            'user_id' => $this->user->id,
+            'title' => 'Slug route',
+            'description' => 'Slug route test',
+        ]);
+
+        $upload = $this->post("/api/v1/series/{$series->slug}/photos", [
+            'photos' => [$this->fakeImage('Green-Rose_2026.jpg')],
+        ]);
+        $upload->assertCreated();
+
+        $series->tags()->detach();
+
+        $retag = $this->postJson("/api/v1/series/{$series->slug}/photos/retag");
+        $retag->assertOk();
+        $retag->assertJsonPath('data.processed', 1);
+        $retag->assertJsonPath('data.failed', 0);
+
+        $names = $series->fresh()->load('tags')->tags->pluck('name')->all();
+        $this->assertContains('green', $names);
+        $this->assertContains('rose', $names);
+        $this->assertContains('2026', $names);
+    }
+
     public function test_retag_endpoint_keeps_manual_numeric_tags(): void
     {
         config()->set('filesystems.default', 'local');
