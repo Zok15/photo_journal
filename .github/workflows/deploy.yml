@@ -72,7 +72,7 @@ jobs:
 
           if [ "$(id -u)" -eq 0 ]; then
             SUDO=""
-          elif sudo -n true 2>/dev/null; then
+          elif sudo -n /bin/systemctl status "${VISION_TAGGER_SERVICE:-vision-tagger}" >/dev/null 2>&1; then
             SUDO="sudo -n"
           else
             echo "Passwordless sudo is required for deploy user (${DEPLOY_USER}) to manage services."
