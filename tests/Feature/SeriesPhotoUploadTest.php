@@ -92,7 +92,6 @@ class SeriesPhotoUploadTest extends TestCase
         $this->assertContains('blue', $tagNames);
         $this->assertContains('flower', $tagNames);
         $this->assertContains('macro', $tagNames);
-        $this->assertContains('2026', $tagNames);
         $this->assertContains(now()->format('Y'), $tagNames);
         $this->assertContains(strtolower(now()->format('F')), $tagNames);
         $this->assertNotContains('square', $tagNames);
@@ -141,6 +140,38 @@ class SeriesPhotoUploadTest extends TestCase
 
         $tagNames = $series->fresh()->load('tags')->tags->pluck('name')->all();
         $this->assertContains('animal', $tagNames);
+    }
+
+    public function test_upload_keeps_only_current_year_numeric_tag_for_auto_tags(): void
+    {
+        config()->set('filesystems.default', 'local');
+        Storage::fake('local');
+
+        $series = Series::query()->create([
+            'user_id' => $this->user->id,
+            'title' => 'Years',
+            'description' => 'Year tags',
+        ]);
+
+        $pastYear = (string) (now()->year - 1);
+        $futureYear = (string) (now()->year + 1);
+        $currentYear = (string) now()->year;
+
+        $response = $this->post("/api/v1/series/{$series->id}/photos", [
+            'photos' => [$this->fakeImage("IMG_{$pastYear}_{$futureYear}.jpg")],
+        ]);
+
+        $response->assertCreated();
+
+        $tagNames = $series->fresh()->load('tags')->tags->pluck('name')->all();
+        $numericTags = collect($tagNames)
+            ->filter(fn ($name): bool => preg_match('/^\d+$/', (string) $name) === 1)
+            ->values()
+            ->all();
+
+        $this->assertSame([$currentYear], $numericTags);
+        $this->assertNotContains($pastYear, $tagNames);
+        $this->assertNotContains($futureYear, $tagNames);
     }
 
     public function test_retag_endpoint_rebuilds_auto_tags_for_series_photos(): void

@@ -35,6 +35,11 @@ class PhotoAutoTagger
         'bez', 'papki', 'novyj', 'novyi', 'proba',
     ];
 
+    private const LOW_VALUE_AUTO_TAGS = [
+        'portrait', 'landscape', 'horizontal', 'vertical', 'square',
+        'photo', 'image', 'picture', 'snapshot',
+    ];
+
     private const COLOR_KEYWORDS = [
         'red' => ['red', 'scarlet', 'crimson', 'bordo', 'krasn'],
         'orange' => ['orange', 'amber', 'mandarin', 'oranzh'],
@@ -128,6 +133,33 @@ class PhotoAutoTagger
         $this->syncSeriesTags($series, $this->detectTagsForPhoto($photo, $disk, $series), false);
     }
 
+    public function isRejectedAutoTag(string $tag): bool
+    {
+        $normalized = $this->normalizeTag($tag);
+        if ($normalized === '') {
+            return true;
+        }
+
+        if ($this->isRejectedNumericTag($normalized)) {
+            return true;
+        }
+
+        if (in_array($normalized, self::STOPWORDS, true)) {
+            return true;
+        }
+
+        if (in_array($normalized, self::LOW_VALUE_AUTO_TAGS, true)) {
+            return true;
+        }
+
+        // Machine-like ids (img1234, dsc2494, pxl991122) have low retrieval value.
+        if (preg_match('/^(img|dsc|dscn|pxl|mvimg|photo|image)\d+$/', $normalized) === 1) {
+            return true;
+        }
+
+        return false;
+    }
+
     /**
      * @param array<int, string> $tagNames
      */
@@ -138,8 +170,7 @@ class PhotoAutoTagger
             ->filter(fn ($value): bool => is_string($value) && $value !== '')
             ->map(fn (string $value): string => $this->normalizeTag($value))
             ->filter()
-            ->filter(fn (string $value): bool => !$this->isRejectedNumericTag($value))
-            ->filter(fn (string $value): bool => !in_array($value, self::STOPWORDS, true))
+            ->filter(fn (string $value): bool => !$this->isRejectedAutoTag($value))
             ->unique()
             ->take(self::MAX_TAGS)
             ->values();
@@ -337,8 +368,7 @@ class PhotoAutoTagger
             ->filter(fn ($value): bool => is_string($value) && $value !== '')
             ->map(fn (string $value): string => $this->normalizeTag($value))
             ->filter()
-            ->filter(fn (string $value): bool => !$this->isRejectedNumericTag($value))
-            ->filter(fn (string $value): bool => !in_array($value, self::STOPWORDS, true))
+            ->filter(fn (string $value): bool => !$this->isRejectedAutoTag($value))
             ->unique();
     }
 
@@ -378,14 +408,9 @@ class PhotoAutoTagger
      */
     private function tagsFromUploadMoment(Photo $photo): array
     {
-        $uploadedAt = $photo->created_at;
-        if ($uploadedAt === null) {
-            return [];
-        }
-
         return [
-            $uploadedAt->format('Y'),
-            strtolower($uploadedAt->format('F')),
+            $this->currentYearTag(),
+            strtolower(($photo->created_at ?? now())->format('F')),
         ];
     }
 
@@ -414,11 +439,7 @@ class PhotoAutoTagger
 
         $date = (string) ($exif['EXIF']['DateTimeOriginal'] ?? '');
         if (preg_match('/^(\d{4}):(\d{2}):(\d{2})/', $date, $m) === 1) {
-            $year = (int) $m[1];
             $month = (int) $m[2];
-            $day = (int) $m[3];
-            $tags[] = 'year-'.$year;
-            $tags[] = sprintf('date-%04d-%02d-%02d', $year, $month, $day);
             $tags[] = $this->seasonByMonth($month);
         }
 
@@ -478,9 +499,12 @@ class PhotoAutoTagger
             return false;
         }
 
-        $year = (int) $tag;
+        return $tag === $this->currentYearTag();
+    }
 
-        return $year >= 1900 && $year <= 2100;
+    private function currentYearTag(): string
+    {
+        return (string) now()->year;
     }
 
     /**
@@ -571,9 +595,6 @@ class PhotoAutoTagger
                     continue;
                 }
 
-                $tags[] = (string) $year;
-                $tags[] = 'year-'.$year;
-                $tags[] = sprintf('date-%04d-%02d-%02d', $year, $month, $day);
                 $tags[] = $this->seasonByMonth($month);
             }
         }

@@ -11,3 +11,7 @@ Artisan::command('inspire', function () {
 Schedule::command('outbox:poll')
     ->everyMinute()
     ->withoutOverlapping();
+
+Schedule::command('tags:cleanup-garbage-auto')
+    ->everyThirtyMinutes()
+    ->withoutOverlapping();
