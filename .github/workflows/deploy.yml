@@ -70,7 +70,17 @@ jobs:
           php artisan storage:link || true
           php artisan queue:restart || true
 
-          sudo systemctl reload "$PHP_FPM_SERVICE" || true
+          if [ "$(id -u)" -eq 0 ]; then
+            SUDO=""
+          elif sudo -n true 2>/dev/null; then
+            SUDO="sudo -n"
+          else
+            echo "Passwordless sudo is required for deploy user (${DEPLOY_USER}) to manage services."
+            echo "Configure NOPASSWD for systemctl and tee in /etc/sudoers.d/."
+            exit 1
+          fi
+
+          $SUDO systemctl reload "$PHP_FPM_SERVICE" || true
 
           # Vision tagger (uvicorn): create/update venv, install deps and restart systemd service.
           cd "$BACKEND_PATH/tools/vision_tagger"
@@ -83,7 +93,7 @@ jobs:
           SERVICE_GROUP="${VISION_TAGGER_GROUP:-www-data}"
           SERVICE_UNIT="/etc/systemd/system/${SERVICE_NAME}.service"
 
-          sudo tee "$SERVICE_UNIT" >/dev/null <<SERVICE
+          $SUDO tee "$SERVICE_UNIT" >/dev/null <<SERVICE
           [Unit]
           Description=Vision Tagger API (Uvicorn)
           After=network.target
@@ -102,10 +112,10 @@ jobs:
           WantedBy=multi-user.target
           SERVICE
 
-          sudo systemctl daemon-reload
-          sudo systemctl enable --now "$SERVICE_NAME"
-          sudo systemctl restart "$SERVICE_NAME"
-          sudo systemctl --no-pager -l status "$SERVICE_NAME" || true
+          $SUDO systemctl daemon-reload
+          $SUDO systemctl enable --now "$SERVICE_NAME"
+          $SUDO systemctl restart "$SERVICE_NAME"
+          $SUDO systemctl --no-pager -l status "$SERVICE_NAME" || true
           REMOTE
 
           ssh -p ${{ secrets.SSH_PORT }} -o StrictHostKeyChecking=no \
