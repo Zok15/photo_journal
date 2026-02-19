@@ -42,8 +42,8 @@ class VisionTaggerClient
             return [];
         }
 
-        $absolutePath = $this->resolveAbsolutePath($disk, $path);
-        if ($absolutePath === null) {
+        ['local_path' => $localPath, 'cleanup' => $cleanup] = $this->resolveLocalPath($disk, $path);
+        if ($localPath === null) {
             return [];
         }
 
@@ -58,7 +58,7 @@ class VisionTaggerClient
         try {
             $response = Http::timeout((int) config('vision.timeout_seconds', 20))
                 ->acceptJson()
-                ->attach('image', file_get_contents($absolutePath), basename($absolutePath))
+                ->attach('image', file_get_contents($localPath), basename($path))
                 ->post((string) config('vision.url'), [
                     // Подсказки передаем JSON-строкой, чтобы сервис мог улучшить релевантность тегов.
                     'tag_hints' => $preparedHints === [] ? '' : json_encode($preparedHints, JSON_UNESCAPED_UNICODE),
@@ -79,7 +79,53 @@ class VisionTaggerClient
                 ->all();
         } catch (\Throwable) {
             return [];
+        } finally {
+            if ($cleanup && is_file($localPath)) {
+                @unlink($localPath);
+            }
         }
+    }
+
+    /**
+     * @return array{local_path: ?string, cleanup: bool}
+     */
+    private function resolveLocalPath(string $disk, string $path): array
+    {
+        $absolutePath = $this->resolveAbsolutePath($disk, $path);
+        if ($absolutePath !== null) {
+            return ['local_path' => $absolutePath, 'cleanup' => false];
+        }
+
+        $storage = Storage::disk($disk);
+        if (!$storage->exists($path)) {
+            return ['local_path' => null, 'cleanup' => false];
+        }
+
+        $stream = $storage->readStream($path);
+        if (!is_resource($stream)) {
+            return ['local_path' => null, 'cleanup' => false];
+        }
+
+        $tmpPath = tempnam(sys_get_temp_dir(), 'vision_');
+        if (!is_string($tmpPath) || $tmpPath === '') {
+            fclose($stream);
+
+            return ['local_path' => null, 'cleanup' => false];
+        }
+
+        $target = fopen($tmpPath, 'wb');
+        if (!is_resource($target)) {
+            fclose($stream);
+            @unlink($tmpPath);
+
+            return ['local_path' => null, 'cleanup' => false];
+        }
+
+        stream_copy_to_stream($stream, $target);
+        fclose($stream);
+        fclose($target);
+
+        return ['local_path' => $tmpPath, 'cleanup' => true];
     }
 
     private function resolveAbsolutePath(string $disk, string $path): ?string
