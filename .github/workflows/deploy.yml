@@ -51,8 +51,9 @@ jobs:
           BACKEND_PATH: ${{ secrets.BACKEND_PATH }}
           PHP_FPM_SERVICE: ${{ secrets.PHP_FPM_SERVICE }}
         run: |
-          ssh -p ${{ secrets.SSH_PORT }} -o StrictHostKeyChecking=no ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} \
-          "BACKEND_PATH='${BACKEND_PATH}' PHP_FPM_SERVICE='${PHP_FPM_SERVICE}' bash -se" <<'SSH'
+          ssh -p ${{ secrets.SSH_PORT }} -o StrictHostKeyChecking=no \
+            ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} \
+            "BACKEND_PATH='${BACKEND_PATH}' PHP_FPM_SERVICE='${PHP_FPM_SERVICE}' bash -se" < /dev/stdin <<'EOS'
           set -euo pipefail
 
           cd "$BACKEND_PATH"
@@ -69,4 +70,4 @@ jobs:
           php artisan queue:restart || true
 
           sudo systemctl reload "$PHP_FPM_SERVICE" || true
-SSH
+EOS
