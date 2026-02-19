@@ -17,12 +17,12 @@ class StoreSeriesPhotosRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'photos' => ['required', 'array', 'min:1', 'max:50'],
+            'photos' => ['required', 'array', 'min:1', 'max:100'],
             'photos.*' => [
                 'required',
                 'file',
                 'image',
-                'max:20480',
+                'max:102400',
                 'mimes:jpg,jpeg,png,webp',
                 'mimetypes:image/jpeg,image/png,image/webp',
             ],
