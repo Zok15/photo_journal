@@ -22,8 +22,10 @@ class AuthApiTest extends TestCase
 
         $response->assertCreated();
         $response->assertJsonStructure(['token', 'user' => ['id', 'name', 'email']]);
+        $response->assertJsonPath('user.locale', 'ru');
         $this->assertDatabaseHas('users', [
             'email' => 'alice@example.com',
+            'locale' => 'ru',
         ]);
     }
 
@@ -103,16 +105,19 @@ class AuthApiTest extends TestCase
         $response = $this->patchJson('/api/v1/profile', [
             'name' => 'After',
             'journal_title' => 'Bird Notes',
+            'locale' => 'en',
         ]);
 
         $response->assertOk();
         $response->assertJsonPath('data.name', 'After');
         $response->assertJsonPath('data.journal_title', 'Bird Notes');
+        $response->assertJsonPath('data.locale', 'en');
 
         $this->assertDatabaseHas('users', [
             'id' => $user->id,
             'name' => 'After',
             'journal_title' => 'Bird Notes',
+            'locale' => 'en',
         ]);
     }
 

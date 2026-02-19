@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Models\Series;
 use App\Models\Tag;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -87,9 +88,16 @@ class TagApiTest extends TestCase
 
     public function test_index_returns_sorted_tag_list_for_filters(): void
     {
-        Tag::query()->create(['name' => 'cityNight']);
-        Tag::query()->create(['name' => 'bird']);
-        Tag::query()->create(['name' => 'autumn']);
+        $series = Series::query()->create([
+            'user_id' => (int) auth()->id(),
+            'title' => 'Tagged',
+            'is_public' => false,
+        ]);
+
+        $first = Tag::query()->create(['name' => 'cityNight']);
+        $second = Tag::query()->create(['name' => 'bird']);
+        $third = Tag::query()->create(['name' => 'autumn']);
+        $series->tags()->attach([$first->id, $second->id, $third->id]);
 
         $response = $this->getJson('/api/v1/tags?limit=10');
 

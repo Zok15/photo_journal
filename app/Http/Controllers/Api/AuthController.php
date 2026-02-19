@@ -22,12 +22,14 @@ class AuthController extends Controller
             'name' => ['required', 'string', 'max:255'],
             'email' => ['required', 'string', 'email', 'max:255', 'unique:users,email'],
             'password' => ['required', 'string', 'min:8'],
+            'locale' => ['nullable', 'in:ru,en'],
         ]);
 
         $user = User::query()->create([
             'name' => $data['name'],
             'email' => $data['email'],
             'password' => $data['password'],
+            'locale' => $data['locale'] ?? 'ru',
         ]);
 
         // Выдаем персональный API-токен для работы SPA/клиента.

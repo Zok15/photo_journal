@@ -30,6 +30,7 @@ class ProfileController extends Controller
         $data = $request->validate([
             'name' => ['sometimes', 'required', 'string', 'max:255'],
             'journal_title' => ['sometimes', 'nullable', 'string', 'max:255'],
+            'locale' => ['sometimes', 'required', 'in:ru,en'],
             'email' => [
                 'sometimes',
                 'required',
