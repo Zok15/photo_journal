@@ -88,6 +88,7 @@ class SeriesApiTest extends TestCase
     public function test_store_creates_series_and_dispatches_processing_job(): void
     {
         Queue::fake();
+        config()->set('filesystems.default', 'local');
         Storage::fake('local');
 
         $payload = [
@@ -113,6 +114,25 @@ class SeriesApiTest extends TestCase
         ]);
 
         Queue::assertPushed(ProcessSeries::class, 1);
+    }
+
+    public function test_store_can_mark_series_as_public(): void
+    {
+        Queue::fake();
+        config()->set('filesystems.default', 'local');
+        Storage::fake('local');
+
+        $response = $this->post('/api/v1/series', [
+            'title' => 'Public series',
+            'is_public' => true,
+            'photos' => [$this->fakeImage('public.jpg')],
+        ]);
+
+        $response->assertCreated();
+        $this->assertDatabaseHas('series', [
+            'title' => 'Public series',
+            'is_public' => 1,
+        ]);
     }
 
     public function test_store_requires_at_least_one_photo(): void
@@ -396,6 +416,27 @@ class SeriesApiTest extends TestCase
             'id' => $series->id,
             'title' => 'After',
             'description' => 'After desc',
+        ]);
+    }
+
+    public function test_update_can_switch_public_visibility(): void
+    {
+        $series = Series::query()->create([
+            'user_id' => $this->user->id,
+            'title' => 'Visibility',
+            'description' => null,
+            'is_public' => false,
+        ]);
+
+        $response = $this->patchJson("/api/v1/series/{$series->id}", [
+            'is_public' => true,
+        ]);
+
+        $response->assertOk();
+        $response->assertJsonPath('data.is_public', true);
+        $this->assertDatabaseHas('series', [
+            'id' => $series->id,
+            'is_public' => 1,
         ]);
     }
 
@@ -793,6 +834,22 @@ class SeriesApiTest extends TestCase
         $response = $this->getJson("/api/v1/series/{$foreignSeries->id}");
 
         $response->assertForbidden();
+    }
+
+    public function test_user_can_view_foreign_public_series(): void
+    {
+        $foreignUser = User::factory()->create();
+        $foreignSeries = Series::query()->create([
+            'user_id' => $foreignUser->id,
+            'title' => 'Foreign public',
+            'description' => 'Foreign',
+            'is_public' => true,
+        ]);
+
+        $response = $this->getJson("/api/v1/series/{$foreignSeries->id}");
+
+        $response->assertOk();
+        $response->assertJsonPath('data.id', $foreignSeries->id);
     }
 
     private function fakeImage(string $name): UploadedFile

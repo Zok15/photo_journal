@@ -5,6 +5,7 @@ namespace App\Filament\Resources\Series\Schemas;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\Textarea;
 use Filament\Forms\Components\TextInput;
+use Filament\Forms\Components\Toggle;
 use Filament\Schemas\Schema;
 
 class SeriesForm
@@ -24,6 +25,9 @@ class SeriesForm
                 Textarea::make('description')
                     ->rows(4)
                     ->columnSpanFull(),
+                Toggle::make('is_public')
+                    ->label('Public')
+                    ->default(false),
             ]);
     }
 }

@@ -18,7 +18,7 @@ class SeriesPolicy
 
     public function view(User $user, Series $series): bool
     {
-        return $series->user_id === $user->id;
+        return $series->user_id === $user->id || (bool) $series->is_public;
     }
 
     public function create(User $user): bool

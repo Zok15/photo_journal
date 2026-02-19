@@ -162,6 +162,7 @@ class SeriesController extends Controller
             'user_id' => $request->user()->id,
             'title' => $data['title'],
             'description' => $data['description'] ?? null,
+            'is_public' => (bool) ($data['is_public'] ?? false),
         ]);
 
         $uploadResult = $this->photoBatchUploader->uploadToSeries($series, $files, $disk);
@@ -253,6 +254,7 @@ class SeriesController extends Controller
         $data = $request->validate([
             'title' => ['sometimes', 'required', 'string', 'max:255'],
             'description' => ['sometimes', 'nullable', 'string'],
+            'is_public' => ['sometimes', 'boolean'],
         ]);
 
         $series->update($data);

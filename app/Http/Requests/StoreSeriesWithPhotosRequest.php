@@ -19,6 +19,7 @@ class StoreSeriesWithPhotosRequest extends FormRequest
         return [
             'title' => ['required', 'string', 'max:255'],
             'description' => ['nullable', 'string'],
+            'is_public' => ['nullable', 'boolean'],
             'photos' => ['required', 'array', 'min:1', 'max:50'],
             'photos.*' => [
                 'required',

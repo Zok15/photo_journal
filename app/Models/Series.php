@@ -6,7 +6,11 @@ use Illuminate\Database\Eloquent\Model;
 
 class Series extends Model
 {
-    protected $fillable = ['user_id', 'title', 'description'];
+    protected $fillable = ['user_id', 'title', 'description', 'is_public'];
+
+    protected $casts = [
+        'is_public' => 'boolean',
+    ];
 
     public function user()
     {
