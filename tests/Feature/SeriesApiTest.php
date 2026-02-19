@@ -107,6 +107,9 @@ class SeriesApiTest extends TestCase
         $response->assertJsonPath('tags_sync', 'queued');
         $response->assertJsonCount(1, 'photos_created');
         $response->assertJsonCount(0, 'photos_failed');
+        $series = Series::query()->where('title', 'Winter walk')->firstOrFail();
+        $response->assertJsonPath('id', $series->id);
+        $response->assertJsonPath('slug', $series->slug);
         $this->assertDatabaseHas('series', [
             'title' => 'Winter walk',
             'description' => 'Evening city lights',
@@ -220,12 +223,28 @@ class SeriesApiTest extends TestCase
 
         $series->tags()->attach($tag->id);
 
-        $response = $this->getJson("/api/v1/series/{$series->id}?include_photos=1");
+        $response = $this->getJson("/api/v1/series/{$series->slug}?include_photos=1");
 
         $response->assertOk();
         $response->assertJsonPath('data.id', $series->id);
+        $response->assertJsonPath('data.slug', $series->slug);
         $response->assertJsonPath('data.photos_count', 1);
         $response->assertJsonPath('data.tags.0.name', 'landscape');
+    }
+
+    public function test_show_supports_legacy_id_path_for_backward_compatibility(): void
+    {
+        $series = Series::query()->create([
+            'user_id' => $this->user->id,
+            'title' => 'Legacy',
+            'description' => 'Legacy path',
+        ]);
+
+        $response = $this->getJson("/api/v1/series/{$series->id}");
+
+        $response->assertOk();
+        $response->assertJsonPath('data.id', $series->id);
+        $response->assertJsonPath('data.slug', $series->slug);
     }
 
     public function test_show_with_include_photos_disables_http_caching(): void

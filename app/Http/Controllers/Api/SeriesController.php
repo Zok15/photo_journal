@@ -386,6 +386,7 @@ class SeriesController extends Controller
 
         return response()->json([
             'id' => $series->id,
+            'slug' => $series->slug,
             'status' => 'queued',
             'photos_created' => $created,
             'photos_failed' => $failed,
