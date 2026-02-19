@@ -175,7 +175,7 @@ class SeriesPhotoUploadTest extends TestCase
         $this->assertContains('2026', $names);
     }
 
-    public function test_retag_endpoint_removes_meaningless_numeric_tags(): void
+    public function test_retag_endpoint_keeps_manual_numeric_tags(): void
     {
         config()->set('filesystems.default', 'local');
         Storage::fake('local');
@@ -198,12 +198,12 @@ class SeriesPhotoUploadTest extends TestCase
         $response->assertOk();
 
         $names = $series->fresh()->load('tags')->tags->pluck('name')->all();
-        $this->assertNotContains('2427', $names);
+        $this->assertContains('2427', $names);
         $this->assertContains('2026', $names);
-        $this->assertDatabaseMissing('tags', ['name' => '2427']);
+        $this->assertDatabaseHas('tags', ['name' => '2427']);
     }
 
-    public function test_retag_endpoint_removes_low_value_orientation_tags(): void
+    public function test_retag_endpoint_keeps_manual_orientation_tags(): void
     {
         config()->set('filesystems.default', 'local');
         Storage::fake('local');
@@ -226,8 +226,8 @@ class SeriesPhotoUploadTest extends TestCase
         $response->assertOk();
 
         $names = $series->fresh()->load('tags')->tags->pluck('name')->all();
-        $this->assertNotContains('portrait', $names);
-        $this->assertDatabaseMissing('tags', ['name' => 'portrait']);
+        $this->assertContains('portrait', $names);
+        $this->assertDatabaseHas('tags', ['name' => 'portrait']);
     }
 
     public function test_index_returns_only_photos_for_series(): void
