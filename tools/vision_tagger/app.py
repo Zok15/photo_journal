@@ -39,8 +39,6 @@ CATEGORY_LABELS = [
     "book", "bag", "toy", "sign", "text", "document",
     # Visual style/meta
     "macro", "closeup",
-    # Colors
-    "red", "orange", "yellow", "green", "blue", "purple", "pink", "white", "black", "brown", "gray",
 ]
 
 # Stage 2: species-level labels by zoological group.
@@ -110,6 +108,8 @@ FLOWER_LABELS = [
     "anemone", "bluebell", "buttercup", "cosmos", "freesia", "gardenia",
     "gerbera", "hyacinth", "lilac", "morningGlory", "narcissus", "pansy",
     "primrose", "ranunculus", "snapdragon", "verbena", "wisteria", "yarrow",
+    "snowdrop", "crocus", "hellebore", "winterAconite", "scilla", "muscari",
+    "lungwort", "pasqueFlower", "coltsfoot",
 ]
 
 REFINEMENT_GROUPS = {
@@ -148,25 +148,9 @@ MAX_SPECIES_PER_GROUP = int(os.getenv("VISION_TAGGER_MAX_SPECIES_PER_GROUP", "3"
 HINT_SCORE_BOOST = float(os.getenv("VISION_TAGGER_HINT_BOOST", "0.06"))
 MAX_HINTS = int(os.getenv("VISION_TAGGER_MAX_HINTS", "20"))
 MAX_TAGS = int(os.getenv("VISION_TAGGER_MAX_TAGS", "10"))
-MAX_COLOR_TAGS = int(os.getenv("VISION_TAGGER_MAX_COLOR_TAGS", "3"))
-COLOR_MIN_RATIO = float(os.getenv("VISION_TAGGER_COLOR_MIN_RATIO", "0.07"))
 ENABLE_MULTI_VIEW = os.getenv("VISION_TAGGER_ENABLE_MULTI_VIEW", "1").strip().lower() not in {
     "0", "false", "no", "off"
 }
-
-COLOR_HSV_BUCKETS = [
-    ("red", lambda h, s, v: (h <= 0.04 or h >= 0.96) and s >= 0.20 and v >= 0.20),
-    ("orange", lambda h, s, v: 0.04 < h <= 0.10 and s >= 0.22 and v >= 0.22),
-    ("yellow", lambda h, s, v: 0.10 < h <= 0.17 and s >= 0.18 and v >= 0.25),
-    ("green", lambda h, s, v: 0.17 < h <= 0.45 and s >= 0.16 and v >= 0.16),
-    ("blue", lambda h, s, v: 0.45 < h <= 0.70 and s >= 0.16 and v >= 0.16),
-    ("purple", lambda h, s, v: 0.70 < h <= 0.82 and s >= 0.18 and v >= 0.15),
-    ("pink", lambda h, s, v: 0.82 < h < 0.96 and s >= 0.16 and v >= 0.25),
-    ("white", lambda h, s, v: s <= 0.11 and v >= 0.86),
-    ("gray", lambda h, s, v: s <= 0.13 and 0.25 <= v < 0.86),
-    ("black", lambda h, s, v: v < 0.22),
-    ("brown", lambda h, s, v: 0.05 < h <= 0.14 and s >= 0.24 and 0.18 <= v < 0.62),
-]
 
 
 def to_camel(label: str) -> str:
@@ -275,49 +259,6 @@ def classify_labels(pil: Image.Image, labels, threshold: float, use_multi_view: 
     return list(best_by_label.items())
 
 
-def detect_color_tags(pil: Image.Image) -> list[tuple[str, float]]:
-    reduced = pil.resize((64, 64))
-    pixels = list(reduced.getdata())
-    total = len(pixels)
-    if total == 0:
-        return []
-
-    counts = {}
-    for red, green, blue in pixels:
-        red_norm = red / 255.0
-        green_norm = green / 255.0
-        blue_norm = blue / 255.0
-        max_channel = max(red_norm, green_norm, blue_norm)
-        min_channel = min(red_norm, green_norm, blue_norm)
-        delta = max_channel - min_channel
-
-        if delta == 0:
-            hue = 0.0
-        elif max_channel == red_norm:
-            hue = ((green_norm - blue_norm) / delta) % 6.0
-        elif max_channel == green_norm:
-            hue = ((blue_norm - red_norm) / delta) + 2.0
-        else:
-            hue = ((red_norm - green_norm) / delta) + 4.0
-
-        hue = (hue / 6.0) % 1.0
-        saturation = 0.0 if max_channel == 0 else (delta / max_channel)
-        value = max_channel
-
-        for name, predicate in COLOR_HSV_BUCKETS:
-            if predicate(hue, saturation, value):
-                counts[name] = counts.get(name, 0) + 1
-                break
-
-    candidates = []
-    for name, count in counts.items():
-        ratio = count / total
-        if ratio >= COLOR_MIN_RATIO:
-            candidates.append((name, ratio))
-
-    return sorted(candidates, key=lambda item: item[1], reverse=True)[:MAX_COLOR_TAGS]
-
-
 def filter_competitive(candidates, base_threshold: float):
     if not candidates:
         return []
@@ -403,7 +344,6 @@ async def tag_image(
         return {"tags": []}
 
     tags_with_score = classify_labels(pil, CATEGORY_LABELS, MIN_SCORE, use_multi_view=True)
-    tags_with_score.extend(detect_color_tags(pil))
 
     # Stage 2 for animals.
     living_score = top_score(tags_with_score, LIVING_GATE_LABELS)
