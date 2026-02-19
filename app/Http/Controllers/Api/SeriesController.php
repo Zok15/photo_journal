@@ -213,6 +213,7 @@ class SeriesController extends Controller
 
             $series->photos->each(function ($photo) use ($disk): void {
                 $photo->setAttribute('preview_url', $this->resolvePhotoPreviewUrl($disk, $photo->path));
+                $photo->setAttribute('public_url', $this->resolvePhotoPublicUrl($disk, $photo->path));
             });
         }
 
@@ -344,13 +345,52 @@ class SeriesController extends Controller
         }
 
         $storage = Storage::disk($disk);
+        $useSignedUrls = (bool) config('photo_processing.preview_signed_urls', false);
+        $isPrivateLocalDisk = $this->isPrivateLocalDisk($disk);
+
+        // Private local disk files are not publicly reachable via Storage::url().
+        // Keep temporary URLs enabled for this case to avoid broken previews.
+        if ($isPrivateLocalDisk) {
+            $useSignedUrls = true;
+        }
+
+        if ($useSignedUrls) {
+            $ttlMinutes = max(1, (int) config('photo_processing.preview_signed_ttl_minutes', 30));
+
+            try {
+                return $storage->temporaryUrl($path, Carbon::now()->addMinutes($ttlMinutes));
+            } catch (\Throwable) {
+                // Фолбэк на обычный URL, если драйвер не умеет signed temporary URLs.
+                return $storage->url($path);
+            }
+        }
+
+        return $storage->url($path);
+    }
+
+    private function resolvePhotoPublicUrl(string $disk, ?string $path): ?string
+    {
+        if ($path === null || $path === '') {
+            return null;
+        }
+
+        if ($this->isPrivateLocalDisk($disk)) {
+            return null;
+        }
 
         try {
-            return $storage->temporaryUrl($path, Carbon::now()->addMinutes(30));
+            return Storage::disk($disk)->url($path);
         } catch (\Throwable) {
-            // Для локальных дисков без signed URL отдаем обычный публичный URL.
-            return $storage->url($path);
+            return null;
         }
+    }
+
+    private function isPrivateLocalDisk(string $disk): bool
+    {
+        $driver = (string) config("filesystems.disks.{$disk}.driver", '');
+        $root = (string) config("filesystems.disks.{$disk}.root", '');
+
+        return $driver === 'local' && $root === storage_path('app/private');
     }
 
     private function normalizeTagNames(array $tags): array
@@ -365,7 +405,7 @@ class SeriesController extends Controller
 
     /**
      * @param \Illuminate\Support\Collection<int, Series> $seriesCollection
-     * @return array<int, array<int, array{id:int, path:string|null, original_name:string|null, preview_url:string|null}>>
+     * @return array<int, array<int, array{id:int, path:string|null, original_name:string|null, preview_url:string|null, public_url:string|null}>>
      */
     private function buildSeriesPreviewMap(\Illuminate\Support\Collection $seriesCollection): array
     {
@@ -414,6 +454,7 @@ class SeriesController extends Controller
                 'path' => $photo->path,
                 'original_name' => $photo->original_name,
                 'preview_url' => $this->resolvePhotoPreviewUrl($disk, $photo->path),
+                'public_url' => $this->resolvePhotoPublicUrl($disk, $photo->path),
             ];
         }
 

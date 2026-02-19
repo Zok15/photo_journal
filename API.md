@@ -192,7 +192,7 @@ Response: Laravel paginator with `data`.
 Each series item includes:
 - `tags`
 - `photos_count`
-- `preview_photos` (limited list for card preview: `id`, `path`, `original_name`, `preview_url`)
+- `preview_photos` (limited list for card preview: `id`, `path`, `original_name`, `preview_url`, `public_url`)
   - limit is configurable via `PHOTO_SERIES_PREVIEW_LIMIT` (default: `18`)
 
 ### `POST /series`
@@ -252,7 +252,9 @@ Query params:
 Response:
 - always returns `data` with series fields and `photos_count`
 - includes `photos` (with nested `tags`) only when `include_photos=true`
-- each photo in `photos` may include `preview_url` (temporary/signed URL for image preview in frontend)
+- each photo in `photos` may include:
+  - `preview_url` (temporary/signed URL for image preview in frontend)
+  - `public_url` (direct URL from storage disk, suitable for public CDN/domain)
 - when `include_photos=true`, photos are returned in manual order (`sort_order`) if set; otherwise newest first
 
 ### `PATCH /series/{series}`
