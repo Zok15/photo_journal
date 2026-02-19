@@ -174,4 +174,5 @@ class PublicSeriesApiTest extends TestCase
         $response->assertJsonPath('author_suggestions.0.period_days', 3);
         $response->assertJsonMissingPath('author_suggestions.2.name');
     }
+
 }
