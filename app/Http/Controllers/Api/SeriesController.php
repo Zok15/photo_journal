@@ -264,6 +264,7 @@ class SeriesController extends Controller
             ])
             ->values()
             ->all();
+        $payload['author_suggestions'] = $this->buildPublicAuthorSuggestions();
         $payload['available_tags'] = Tag::query()
             ->whereHas('series', function ($builder): void {
                 $builder->where('series.is_public', true);
@@ -537,6 +538,46 @@ class SeriesController extends Controller
         return response()->json([
             'data' => $series->fresh()->loadCount('photos')->load('tags'),
         ]);
+    }
+
+    /**
+     * @return array<int, array{id:int,name:string,series_count:int,period_days:int}>
+     */
+    private function buildPublicAuthorSuggestions(): array
+    {
+        foreach ([3, 7, 30, 365] as $periodDays) {
+            $cutoff = Carbon::now()->subDays($periodDays);
+
+            $authors = User::query()
+                ->select('users.id', 'users.name')
+                ->selectRaw('COUNT(series.id) as series_count')
+                ->join('series', 'series.user_id', '=', 'users.id')
+                ->where('series.is_public', true)
+                ->where('series.created_at', '>=', $cutoff)
+                ->whereNotNull('users.name')
+                ->where('users.name', '<>', '')
+                ->groupBy('users.id', 'users.name')
+                ->orderByDesc('series_count')
+                ->orderBy('users.name')
+                ->limit(5)
+                ->get();
+
+            if ($authors->isEmpty()) {
+                continue;
+            }
+
+            return $authors
+                ->map(fn (User $user): array => [
+                    'id' => (int) $user->id,
+                    'name' => (string) $user->name,
+                    'series_count' => (int) ($user->series_count ?? 0),
+                    'period_days' => $periodDays,
+                ])
+                ->values()
+                ->all();
+        }
+
+        return [];
     }
 
     private function resolvePhotoPreviewUrl(string $disk, ?string $path): ?string

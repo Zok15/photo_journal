@@ -5,6 +5,8 @@ namespace Tests\Feature;
 use App\Models\Series;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
 
 class PublicSeriesApiTest extends TestCase
@@ -116,5 +118,60 @@ class PublicSeriesApiTest extends TestCase
         $response = $this->getJson("/api/v1/public/series/{$series->id}");
 
         $response->assertNotFound();
+    }
+
+    public function test_public_index_returns_author_suggestions_with_period_fallback(): void
+    {
+        $alice = User::factory()->create(['name' => 'Alice']);
+        $bob = User::factory()->create(['name' => 'Bob']);
+        $charlie = User::factory()->create(['name' => 'Charlie']);
+
+        $oldSeries = Series::query()->create([
+            'user_id' => $alice->id,
+            'title' => 'Too old',
+            'is_public' => true,
+        ]);
+        DB::table('series')->where('id', $oldSeries->id)->update([
+            'created_at' => Carbon::now()->subDays(5),
+            'updated_at' => Carbon::now()->subDays(5),
+        ]);
+
+        $bobRecentOne = Series::query()->create([
+            'user_id' => $bob->id,
+            'title' => 'Bob recent one',
+            'is_public' => true,
+        ]);
+        DB::table('series')->where('id', $bobRecentOne->id)->update([
+            'created_at' => Carbon::now()->subDay(),
+            'updated_at' => Carbon::now()->subDay(),
+        ]);
+
+        $bobRecentTwo = Series::query()->create([
+            'user_id' => $bob->id,
+            'title' => 'Bob recent two',
+            'is_public' => true,
+        ]);
+        DB::table('series')->where('id', $bobRecentTwo->id)->update([
+            'created_at' => Carbon::now()->subHours(12),
+            'updated_at' => Carbon::now()->subHours(12),
+        ]);
+
+        $charlieRecent = Series::query()->create([
+            'user_id' => $charlie->id,
+            'title' => 'Charlie recent',
+            'is_public' => true,
+        ]);
+        DB::table('series')->where('id', $charlieRecent->id)->update([
+            'created_at' => Carbon::now()->subDays(2),
+            'updated_at' => Carbon::now()->subDays(2),
+        ]);
+
+        $response = $this->getJson('/api/v1/public/series');
+
+        $response->assertOk();
+        $response->assertJsonPath('author_suggestions.0.name', 'Bob');
+        $response->assertJsonPath('author_suggestions.0.series_count', 2);
+        $response->assertJsonPath('author_suggestions.0.period_days', 3);
+        $response->assertJsonMissingPath('author_suggestions.2.name');
     }
 }
