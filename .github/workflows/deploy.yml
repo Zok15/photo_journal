@@ -50,6 +50,7 @@ jobs:
         env:
           BACKEND_PATH: ${{ secrets.BACKEND_PATH }}
           PHP_FPM_SERVICE: ${{ secrets.PHP_FPM_SERVICE }}
+          QUEUE_WORKER_SERVICE: ${{ secrets.QUEUE_WORKER_SERVICE }}
           VISION_TAGGER_SERVICE: ${{ secrets.VISION_TAGGER_SERVICE }}
           VISION_TAGGER_GROUP: ${{ secrets.VISION_TAGGER_GROUP }}
           DEPLOY_USER: ${{ secrets.SSH_USER }}
@@ -112,12 +113,37 @@ jobs:
           WantedBy=multi-user.target
           SERVICE
 
+          QUEUE_SERVICE_NAME="${QUEUE_WORKER_SERVICE:-photo-journal-queue}"
+          QUEUE_SERVICE_UNIT="/etc/systemd/system/${QUEUE_SERVICE_NAME}.service"
+
+          $SUDO tee "$QUEUE_SERVICE_UNIT" >/dev/null <<SERVICE
+          [Unit]
+          Description=Photo Journal Laravel Queue Worker
+          After=network.target
+
+          [Service]
+          Type=simple
+          User=${DEPLOY_USER}
+          Group=www-data
+          WorkingDirectory=${BACKEND_PATH}
+          ExecStart=/usr/bin/php artisan queue:work --sleep=1 --tries=3 --max-time=3600
+          ExecReload=/usr/bin/php artisan queue:restart
+          Restart=always
+          RestartSec=3
+
+          [Install]
+          WantedBy=multi-user.target
+          SERVICE
+
           $SUDO systemctl daemon-reload
           $SUDO systemctl enable --now "$SERVICE_NAME"
           $SUDO systemctl restart "$SERVICE_NAME"
           $SUDO systemctl --no-pager -l status "$SERVICE_NAME" || true
+          $SUDO systemctl enable --now "$QUEUE_SERVICE_NAME"
+          $SUDO systemctl restart "$QUEUE_SERVICE_NAME"
+          $SUDO systemctl --no-pager -l status "$QUEUE_SERVICE_NAME" || true
           REMOTE
 
           ssh -p ${{ secrets.SSH_PORT }} -o StrictHostKeyChecking=no \
             ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} \
-            "BACKEND_PATH='${BACKEND_PATH}' PHP_FPM_SERVICE='${PHP_FPM_SERVICE}' VISION_TAGGER_SERVICE='${VISION_TAGGER_SERVICE}' VISION_TAGGER_GROUP='${VISION_TAGGER_GROUP}' DEPLOY_USER='${DEPLOY_USER}' bash -se" < /tmp/remote_deploy.sh
+            "BACKEND_PATH='${BACKEND_PATH}' PHP_FPM_SERVICE='${PHP_FPM_SERVICE}' QUEUE_WORKER_SERVICE='${QUEUE_WORKER_SERVICE}' VISION_TAGGER_SERVICE='${VISION_TAGGER_SERVICE}' VISION_TAGGER_GROUP='${VISION_TAGGER_GROUP}' DEPLOY_USER='${DEPLOY_USER}' bash -se" < /tmp/remote_deploy.sh
