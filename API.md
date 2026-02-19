@@ -192,7 +192,8 @@ Response: Laravel paginator with `data`.
 Each series item includes:
 - `tags`
 - `photos_count`
-- `preview_photos` (all photos for card preview: `id`, `path`, `original_name`, `preview_url`)
+- `preview_photos` (limited list for card preview: `id`, `path`, `original_name`, `preview_url`)
+  - limit is configurable via `PHOTO_SERIES_PREVIEW_LIMIT` (default: `18`)
 
 ### `POST /series`
 

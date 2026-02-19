@@ -5,7 +5,6 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\StoreSeriesWithPhotosRequest;
 use App\Jobs\ProcessSeries;
-use App\Models\Photo;
 use App\Models\Series;
 use App\Models\Tag;
 use App\Services\PhotoBatchUploader;
@@ -381,17 +380,27 @@ class SeriesController extends Controller
             return [];
         }
 
+        $limit = max(1, (int) config('photo_processing.series_preview_photos_limit', 18));
         $disk = config('filesystems.default');
 
-        /** @var \Illuminate\Support\Collection<int, Photo> $photos */
-        $photos = Photo::query()
-            ->select(['id', 'series_id', 'path', 'original_name', 'sort_order', 'created_at'])
-            ->whereIn('series_id', $seriesIds)
+        // Берем не все фото серии, а только первые N по отображаемому порядку.
+        // Используем оконную функцию, чтобы ограничить выборку по каждой серии одним SQL-запросом.
+        $rankedPhotos = DB::table('photos')
+            ->select(['id', 'series_id', 'path', 'original_name'])
+            ->selectRaw(
+                'ROW_NUMBER() OVER (
+                    PARTITION BY series_id
+                    ORDER BY sort_order IS NULL, sort_order, created_at DESC, id DESC
+                ) AS row_num'
+            )
+            ->whereIn('series_id', $seriesIds);
+
+        /** @var \Illuminate\Support\Collection<int, object{id:int|string,series_id:int|string,path:?string,original_name:?string,row_num:int|string}> $photos */
+        $photos = DB::query()
+            ->fromSub($rankedPhotos, 'ranked_photos')
+            ->where('row_num', '<=', $limit)
             ->orderBy('series_id')
-            ->orderByRaw('sort_order IS NULL')
-            ->orderBy('sort_order')
-            ->latest('created_at')
-            ->latest('id')
+            ->orderBy('row_num')
             ->get();
 
         $map = [];
