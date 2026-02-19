@@ -84,23 +84,23 @@ jobs:
           SERVICE_UNIT="/etc/systemd/system/${SERVICE_NAME}.service"
 
           sudo tee "$SERVICE_UNIT" >/dev/null <<SERVICE
-[Unit]
-Description=Vision Tagger API (Uvicorn)
-After=network.target
+          [Unit]
+          Description=Vision Tagger API (Uvicorn)
+          After=network.target
 
-[Service]
-Type=simple
-User=${DEPLOY_USER}
-Group=${SERVICE_GROUP}
-WorkingDirectory=${BACKEND_PATH}/tools/vision_tagger
-Environment=PYTHONUNBUFFERED=1
-ExecStart=${BACKEND_PATH}/tools/vision_tagger/.venv/bin/uvicorn app:app --host 127.0.0.1 --port 8010
-Restart=always
-RestartSec=3
+          [Service]
+          Type=simple
+          User=${DEPLOY_USER}
+          Group=${SERVICE_GROUP}
+          WorkingDirectory=${BACKEND_PATH}/tools/vision_tagger
+          Environment=PYTHONUNBUFFERED=1
+          ExecStart=${BACKEND_PATH}/tools/vision_tagger/.venv/bin/uvicorn app:app --host 127.0.0.1 --port 8010
+          Restart=always
+          RestartSec=3
 
-[Install]
-WantedBy=multi-user.target
-SERVICE
+          [Install]
+          WantedBy=multi-user.target
+          SERVICE
 
           sudo systemctl daemon-reload
           sudo systemctl enable --now "$SERVICE_NAME"
