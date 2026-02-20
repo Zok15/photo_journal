@@ -3,9 +3,12 @@
 namespace Tests\Feature;
 
 use App\Models\User;
+use App\Notifications\LocalizedResetPassword;
+use App\Notifications\LocalizedVerifyEmail;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Notification;
 use Illuminate\Support\Facades\Password;
+use Illuminate\Support\Facades\URL;
 use Laravel\Sanctum\PersonalAccessToken;
 use Laravel\Sanctum\Sanctum;
 use Tests\TestCase;
@@ -16,6 +19,8 @@ class AuthApiTest extends TestCase
 
     public function test_register_returns_token_and_user(): void
     {
+        Notification::fake();
+
         $response = $this->postJson('/api/v1/auth/register', [
             'name' => 'Alice',
             'email' => 'alice@example.com',
@@ -29,6 +34,35 @@ class AuthApiTest extends TestCase
             'email' => 'alice@example.com',
             'locale' => 'ru',
         ]);
+
+        $user = User::query()->where('email', 'alice@example.com')->firstOrFail();
+        Notification::assertSentTo(
+            $user,
+            LocalizedVerifyEmail::class,
+            fn (LocalizedVerifyEmail $notification): bool => $notification->locale === 'ru'
+        );
+    }
+
+    public function test_register_uses_requested_locale_for_verification_email(): void
+    {
+        Notification::fake();
+
+        $response = $this->postJson('/api/v1/auth/register', [
+            'name' => 'Alice',
+            'email' => 'alice-en@example.com',
+            'password' => 'password123',
+            'locale' => 'en',
+        ]);
+
+        $response->assertCreated();
+        $response->assertJsonPath('user.locale', 'en');
+
+        $user = User::query()->where('email', 'alice-en@example.com')->firstOrFail();
+        Notification::assertSentTo(
+            $user,
+            LocalizedVerifyEmail::class,
+            fn (LocalizedVerifyEmail $notification): bool => $notification->locale === 'en'
+        );
     }
 
     public function test_login_returns_token_for_valid_credentials(): void
@@ -179,7 +213,32 @@ class AuthApiTest extends TestCase
 
         $response->assertOk();
         $response->assertJsonPath('message', 'If the account exists, a reset link has been sent.');
-        Notification::assertSentTo($user, \Illuminate\Auth\Notifications\ResetPassword::class);
+        Notification::assertSentTo($user, LocalizedResetPassword::class);
+    }
+
+    public function test_forgot_password_uses_requested_locale_for_reset_email(): void
+    {
+        Notification::fake();
+        $user = User::factory()->create([
+            'email' => 'localized-reset@example.com',
+            'locale' => 'ru',
+        ]);
+
+        $response = $this->postJson('/api/v1/auth/forgot-password', [
+            'email' => $user->email,
+            'locale' => 'en',
+        ]);
+
+        $response->assertOk();
+        Notification::assertSentTo(
+            $user->fresh(),
+            LocalizedResetPassword::class,
+            fn (LocalizedResetPassword $notification): bool => $notification->locale === 'en'
+        );
+        $this->assertDatabaseHas('users', [
+            'id' => $user->id,
+            'locale' => 'en',
+        ]);
     }
 
     public function test_forgot_password_returns_generic_message_for_unknown_email(): void
@@ -254,5 +313,49 @@ class AuthApiTest extends TestCase
         ]);
 
         $response->assertUnprocessable();
+    }
+
+    public function test_verify_email_marks_user_as_verified(): void
+    {
+        $user = User::factory()->unverified()->create([
+            'email' => 'verify-me@example.com',
+        ]);
+
+        $url = URL::temporarySignedRoute(
+            'verification.verify',
+            now()->addMinutes(60),
+            [
+                'id' => $user->id,
+                'hash' => sha1($user->email),
+            ]
+        );
+
+        $response = $this->getJson($url);
+
+        $response->assertOk();
+        $response->assertJsonPath('message', 'Email has been verified.');
+        $this->assertNotNull($user->fresh()->email_verified_at);
+    }
+
+    public function test_resend_verification_email_sends_localized_notification(): void
+    {
+        Notification::fake();
+        $user = User::factory()->unverified()->create([
+            'locale' => 'ru',
+        ]);
+
+        Sanctum::actingAs($user);
+
+        $response = $this->postJson('/api/v1/auth/email/verification-notification', [
+            'locale' => 'en',
+        ]);
+
+        $response->assertOk();
+        $response->assertJsonPath('message', 'Verification email has been sent.');
+        Notification::assertSentTo(
+            $user->fresh(),
+            LocalizedVerifyEmail::class,
+            fn (LocalizedVerifyEmail $notification): bool => $notification->locale === 'en'
+        );
     }
 }

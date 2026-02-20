@@ -4,11 +4,14 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\User;
+use Illuminate\Auth\Events\Verified;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Password;
+use Illuminate\Support\Facades\URL;
 use Illuminate\Support\Str;
 use Symfony\Component\HttpFoundation\Response;
 
@@ -28,15 +31,33 @@ class AuthController extends Controller
             'locale' => ['nullable', 'in:ru,en'],
         ]);
 
-        $user = User::query()->create([
-            'name' => $data['name'],
-            'email' => $data['email'],
-            'password' => $data['password'],
-            'locale' => $data['locale'] ?? 'ru',
-        ]);
+        $locale = $data['locale'] ?? $this->resolveLocale($request);
 
-        // Выдаем персональный API-токен для работы SPA/клиента.
-        $token = $user->createToken('api-token')->plainTextToken;
+        try {
+            [$user, $token] = DB::transaction(function () use ($data, $locale): array {
+                $user = User::query()->create([
+                    'name' => $data['name'],
+                    'email' => $data['email'],
+                    'password' => $data['password'],
+                    'locale' => $locale,
+                ]);
+
+                $user->sendEmailVerificationNotification();
+                // Выдаем персональный API-токен для работы SPA/клиента.
+                $token = $user->createToken('api-token')->plainTextToken;
+
+                return [$user, $token];
+            });
+        } catch (\Throwable $e) {
+            Log::error('Registration verification email dispatch failed.', [
+                'email' => $data['email'],
+                'error' => $e->getMessage(),
+            ]);
+
+            return response()->json([
+                'message' => 'Verification email service is unavailable.',
+            ], Response::HTTP_SERVICE_UNAVAILABLE);
+        }
 
         return response()->json([
             'token' => $token,
@@ -82,7 +103,12 @@ class AuthController extends Controller
     {
         $data = $request->validate([
             'email' => ['required', 'string', 'email'],
+            'locale' => ['nullable', 'in:ru,en'],
         ]);
+
+        $locale = $data['locale'] ?? $this->resolveLocale($request);
+        // Обновляем предпочитаемый язык для будущих уведомлений, если пользователь существует.
+        User::query()->where('email', $data['email'])->update(['locale' => $locale]);
 
         try {
             $status = Password::sendResetLink([
@@ -109,6 +135,82 @@ class AuthController extends Controller
         return response()->json([
             'message' => __($status),
         ], Response::HTTP_UNPROCESSABLE_ENTITY);
+    }
+
+    public function verifyEmail(Request $request, int $id, string $hash): JsonResponse
+    {
+        if (!URL::hasValidSignature($request)) {
+            return response()->json([
+                'message' => 'Invalid or expired verification link.',
+            ], Response::HTTP_FORBIDDEN);
+        }
+
+        /** @var User|null $user */
+        $user = User::query()->find($id);
+        if ($user === null) {
+            return response()->json([
+                'message' => 'User not found.',
+            ], Response::HTTP_NOT_FOUND);
+        }
+
+        if (!hash_equals((string) $hash, sha1($user->getEmailForVerification()))) {
+            return response()->json([
+                'message' => 'Invalid verification link.',
+            ], Response::HTTP_FORBIDDEN);
+        }
+
+        if ($user->hasVerifiedEmail()) {
+            return response()->json([
+                'message' => 'Email already verified.',
+            ]);
+        }
+
+        if ($user->markEmailAsVerified()) {
+            event(new Verified($user));
+        }
+
+        return response()->json([
+            'message' => 'Email has been verified.',
+        ]);
+    }
+
+    public function resendVerificationEmail(Request $request): JsonResponse
+    {
+        /** @var User $user */
+        $user = $request->user();
+
+        if ($user->hasVerifiedEmail()) {
+            return response()->json([
+                'message' => 'Email already verified.',
+            ]);
+        }
+
+        $data = $request->validate([
+            'locale' => ['nullable', 'in:ru,en'],
+        ]);
+
+        $locale = $data['locale'] ?? $this->resolveLocale($request);
+        if ($user->locale !== $locale) {
+            $user->update(['locale' => $locale]);
+        }
+
+        try {
+            $user->sendEmailVerificationNotification();
+        } catch (\Throwable $e) {
+            Log::error('Verification email dispatch failed.', [
+                'user_id' => $user->id,
+                'email' => $user->email,
+                'error' => $e->getMessage(),
+            ]);
+
+            return response()->json([
+                'message' => 'Verification email service is unavailable.',
+            ], Response::HTTP_SERVICE_UNAVAILABLE);
+        }
+
+        return response()->json([
+            'message' => 'Verification email has been sent.',
+        ]);
     }
 
     public function resetPassword(Request $request): JsonResponse
@@ -141,5 +243,20 @@ class AuthController extends Controller
         return response()->json([
             'message' => 'Password has been reset.',
         ]);
+    }
+
+    private function resolveLocale(Request $request): string
+    {
+        $accepted = ['ru', 'en'];
+
+        $header = strtolower((string) $request->header('Accept-Language'));
+        foreach (explode(',', $header) as $part) {
+            $locale = substr(trim($part), 0, 2);
+            if (in_array($locale, $accepted, true)) {
+                return $locale;
+            }
+        }
+
+        return 'ru';
     }
 }
