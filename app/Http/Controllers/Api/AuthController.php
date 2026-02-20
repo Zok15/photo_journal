@@ -7,6 +7,7 @@ use App\Models\User;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Password;
 use Illuminate\Support\Str;
 use Symfony\Component\HttpFoundation\Response;
@@ -83,9 +84,20 @@ class AuthController extends Controller
             'email' => ['required', 'string', 'email'],
         ]);
 
-        $status = Password::sendResetLink([
-            'email' => $data['email'],
-        ]);
+        try {
+            $status = Password::sendResetLink([
+                'email' => $data['email'],
+            ]);
+        } catch (\Throwable $e) {
+            Log::error('Password reset email dispatch failed.', [
+                'email' => $data['email'],
+                'error' => $e->getMessage(),
+            ]);
+
+            return response()->json([
+                'message' => 'Password reset email service is unavailable.',
+            ], Response::HTTP_SERVICE_UNAVAILABLE);
+        }
 
         // Do not reveal whether the email exists in the system.
         if ($status === Password::RESET_LINK_SENT || $status === Password::INVALID_USER) {

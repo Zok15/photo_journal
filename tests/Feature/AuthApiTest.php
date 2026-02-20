@@ -195,6 +195,20 @@ class AuthApiTest extends TestCase
         Notification::assertNothingSent();
     }
 
+    public function test_forgot_password_returns_503_when_mail_transport_fails(): void
+    {
+        Password::shouldReceive('sendResetLink')
+            ->once()
+            ->andThrow(new \RuntimeException('Mail transport failed'));
+
+        $response = $this->postJson('/api/v1/auth/forgot-password', [
+            'email' => 'reset@example.com',
+        ]);
+
+        $response->assertStatus(503);
+        $response->assertJsonPath('message', 'Password reset email service is unavailable.');
+    }
+
     public function test_reset_password_updates_password_and_allows_login_with_new_one(): void
     {
         $user = User::factory()->create([
