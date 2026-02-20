@@ -15,6 +15,17 @@ DB UI (dev): Adminer
 
 ---
 
+## Production Infrastructure
+
+- Hosting provider: Hetzner (Linux VPS).
+- Main domain: `photolog.org`.
+- Public image delivery domains: `photos.photolog.org` and `photos-dev.photolog.org`.
+- Photo object storage: Cloudflare R2.
+- DNS and domain records: Cloudflare DNS.
+- Transactional email service: Resend (password reset and system emails).
+
+---
+
 ## Requirements
 
 - PHP `^8.2`
