@@ -4,6 +4,8 @@ namespace Tests\Feature;
 
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Notification;
+use Illuminate\Support\Facades\Password;
 use Laravel\Sanctum\PersonalAccessToken;
 use Laravel\Sanctum\Sanctum;
 use Tests\TestCase;
@@ -162,5 +164,81 @@ class AuthApiTest extends TestCase
         $authMe->assertOk();
 
         $this->assertSame($profile->json(), $authMe->json());
+    }
+
+    public function test_forgot_password_sends_reset_notification_for_existing_user(): void
+    {
+        Notification::fake();
+        $user = User::factory()->create([
+            'email' => 'reset@example.com',
+        ]);
+
+        $response = $this->postJson('/api/v1/auth/forgot-password', [
+            'email' => $user->email,
+        ]);
+
+        $response->assertOk();
+        $response->assertJsonPath('message', 'If the account exists, a reset link has been sent.');
+        Notification::assertSentTo($user, \Illuminate\Auth\Notifications\ResetPassword::class);
+    }
+
+    public function test_forgot_password_returns_generic_message_for_unknown_email(): void
+    {
+        Notification::fake();
+
+        $response = $this->postJson('/api/v1/auth/forgot-password', [
+            'email' => 'missing@example.com',
+        ]);
+
+        $response->assertOk();
+        $response->assertJsonPath('message', 'If the account exists, a reset link has been sent.');
+        Notification::assertNothingSent();
+    }
+
+    public function test_reset_password_updates_password_and_allows_login_with_new_one(): void
+    {
+        $user = User::factory()->create([
+            'email' => 'restore@example.com',
+            'password' => 'old-password-123',
+        ]);
+
+        $token = Password::broker()->createToken($user);
+
+        $response = $this->postJson('/api/v1/auth/reset-password', [
+            'email' => $user->email,
+            'token' => $token,
+            'password' => 'new-password-123',
+            'password_confirmation' => 'new-password-123',
+        ]);
+
+        $response->assertOk();
+        $response->assertJsonPath('message', 'Password has been reset.');
+
+        $this->postJson('/api/v1/auth/login', [
+            'email' => $user->email,
+            'password' => 'old-password-123',
+        ])->assertStatus(422);
+
+        $this->postJson('/api/v1/auth/login', [
+            'email' => $user->email,
+            'password' => 'new-password-123',
+        ])->assertOk();
+    }
+
+    public function test_reset_password_rejects_invalid_token(): void
+    {
+        $user = User::factory()->create([
+            'email' => 'bad-token@example.com',
+            'password' => 'old-password-123',
+        ]);
+
+        $response = $this->postJson('/api/v1/auth/reset-password', [
+            'email' => $user->email,
+            'token' => 'invalid-token',
+            'password' => 'new-password-123',
+            'password_confirmation' => 'new-password-123',
+        ]);
+
+        $response->assertUnprocessable();
     }
 }

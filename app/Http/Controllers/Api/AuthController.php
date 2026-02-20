@@ -7,6 +7,8 @@ use App\Models\User;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Password;
+use Illuminate\Support\Str;
 use Symfony\Component\HttpFoundation\Response;
 
 /**
@@ -73,5 +75,59 @@ class AuthController extends Controller
         $user->currentAccessToken()?->delete();
 
         return response()->json(status: Response::HTTP_NO_CONTENT);
+    }
+
+    public function forgotPassword(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'email' => ['required', 'string', 'email'],
+        ]);
+
+        $status = Password::sendResetLink([
+            'email' => $data['email'],
+        ]);
+
+        // Do not reveal whether the email exists in the system.
+        if ($status === Password::RESET_LINK_SENT || $status === Password::INVALID_USER) {
+            return response()->json([
+                'message' => 'If the account exists, a reset link has been sent.',
+            ]);
+        }
+
+        return response()->json([
+            'message' => __($status),
+        ], Response::HTTP_UNPROCESSABLE_ENTITY);
+    }
+
+    public function resetPassword(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'token' => ['required', 'string'],
+            'email' => ['required', 'string', 'email'],
+            'password' => ['required', 'string', 'min:8', 'confirmed'],
+        ]);
+
+        $status = Password::reset(
+            $data,
+            function (User $user, string $password): void {
+                $user->forceFill([
+                    'password' => $password,
+                    'remember_token' => Str::random(60),
+                ])->save();
+
+                // Force re-login on all devices after password reset.
+                $user->tokens()->delete();
+            }
+        );
+
+        if ($status !== Password::PASSWORD_RESET) {
+            return response()->json([
+                'message' => __($status),
+            ], Response::HTTP_UNPROCESSABLE_ENTITY);
+        }
+
+        return response()->json([
+            'message' => 'Password has been reset.',
+        ]);
     }
 }
