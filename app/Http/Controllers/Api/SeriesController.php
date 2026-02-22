@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Http\Requests\StoreSeriesWithPhotosRequest;
+use App\Jobs\ModerateSeriesContent;
 use App\Jobs\ProcessSeries;
 use App\Jobs\SyncSeriesAutoTags;
 use App\Models\Series;
@@ -168,10 +169,12 @@ class SeriesController extends Controller
         $perPage = $validated['per_page'] ?? 15;
         $query = Series::query()
             ->where('is_public', true)
+            ->where('publication_status', Series::PUBLICATION_PUBLISHED)
             ->with(['tags', 'user:id,name'])
             ->withCount('photos');
         $calendarDatesQuery = Series::query()
-            ->where('is_public', true);
+            ->where('is_public', true)
+            ->where('publication_status', Series::PUBLICATION_PUBLISHED);
 
         $search = trim((string) ($validated['search'] ?? ''));
         if ($search !== '') {
@@ -255,6 +258,7 @@ class SeriesController extends Controller
             ->select('users.id', 'users.name')
             ->join('series', 'series.user_id', '=', 'users.id')
             ->where('series.is_public', true)
+            ->where('series.publication_status', Series::PUBLICATION_PUBLISHED)
             ->whereNotNull('users.name')
             ->distinct()
             ->orderBy('users.name')
@@ -268,7 +272,9 @@ class SeriesController extends Controller
         $payload['author_suggestions'] = $this->buildPublicAuthorSuggestions();
         $payload['available_tags'] = Tag::query()
             ->whereHas('series', function ($builder): void {
-                $builder->where('series.is_public', true);
+                $builder
+                    ->where('series.is_public', true)
+                    ->where('series.publication_status', Series::PUBLICATION_PUBLISHED);
             })
             ->orderBy('name')
             ->get(['id', 'name'])
@@ -285,11 +291,13 @@ class SeriesController extends Controller
             DB::table('photos')
                 ->join($seriesTable, $seriesTable.'.id', '=', 'photos.series_id')
                 ->where($seriesTable.'.is_public', true)
+                ->where($seriesTable.'.publication_status', Series::PUBLICATION_PUBLISHED)
                 ->max('photos.updated_at'),
             DB::table('series_tag')
                 ->join($seriesTable, $seriesTable.'.id', '=', 'series_tag.series_id')
                 ->join('tags', 'tags.id', '=', 'series_tag.tag_id')
                 ->where($seriesTable.'.is_public', true)
+                ->where($seriesTable.'.publication_status', Series::PUBLICATION_PUBLISHED)
                 ->max('tags.updated_at'),
         );
 
@@ -298,7 +306,7 @@ class SeriesController extends Controller
 
     public function publicShow(Request $request, Series $series): JsonResponse
     {
-        if (! (bool) $series->is_public) {
+        if (! (bool) $series->is_public || (string) $series->publication_status !== Series::PUBLICATION_PUBLISHED) {
             abort(404);
         }
 
@@ -359,11 +367,23 @@ class SeriesController extends Controller
 
         $disk = config('filesystems.default');
         $files = $request->file('photos', []);
+        $requestedPublic = (bool) ($data['is_public'] ?? false);
         $series = Series::create([
             'user_id' => $request->user()->id,
             'title' => $data['title'],
             'description' => $data['description'] ?? null,
-            'is_public' => (bool) ($data['is_public'] ?? false),
+            'is_public' => false,
+            'publication_status' => $requestedPublic
+                ? Series::PUBLICATION_PENDING_MODERATION
+                : Series::PUBLICATION_DRAFT,
+            'moderation_status' => $requestedPublic
+                ? Series::MODERATION_PENDING
+                : Series::MODERATION_APPROVED,
+            'publication_requested_at' => $requestedPublic ? now() : null,
+            'moderation_reason' => null,
+            'moderation_labels' => [],
+            'moderated_at' => null,
+            'moderated_by' => null,
         ]);
 
         $uploadResult = $this->photoBatchUploader->uploadToSeries($series, $files, $disk);
@@ -381,6 +401,9 @@ class SeriesController extends Controller
 
         ProcessSeries::dispatch($series->id);
         SyncSeriesAutoTags::dispatch($series->id);
+        if ($requestedPublic) {
+            ModerateSeriesContent::dispatch($series->id);
+        }
         // Инвалидация версий кеша после создания серии.
         $this->invalidateSeriesCaches($request->user()->id, $series);
 
@@ -391,6 +414,8 @@ class SeriesController extends Controller
             'photos_created' => $created,
             'photos_failed' => $failed,
             'tags_sync' => 'queued',
+            'publication_status' => $series->publication_status,
+            'moderation_status' => $series->moderation_status,
         ], 201);
     }
 
@@ -461,7 +486,37 @@ class SeriesController extends Controller
             'is_public' => ['sometimes', 'boolean'],
         ]);
 
-        $series->update($data);
+        $requestedPublic = array_key_exists('is_public', $data) ? (bool) $data['is_public'] : null;
+        unset($data['is_public']);
+
+        $series->fill($data);
+
+        if ($requestedPublic === true && ! $series->isPublished()) {
+            $series->forceFill([
+                'is_public' => false,
+                'publication_status' => Series::PUBLICATION_PENDING_MODERATION,
+                'moderation_status' => Series::MODERATION_PENDING,
+                'publication_requested_at' => now(),
+                'moderation_reason' => null,
+                'moderation_labels' => [],
+                'moderated_at' => null,
+                'moderated_by' => null,
+            ]);
+        }
+
+        if ($requestedPublic === false) {
+            $series->forceFill([
+                'is_public' => false,
+                'publication_status' => Series::PUBLICATION_DRAFT,
+                'publication_requested_at' => null,
+            ]);
+        }
+
+        $series->save();
+
+        if ($requestedPublic === true && (string) $series->publication_status === Series::PUBLICATION_PENDING_MODERATION) {
+            ModerateSeriesContent::dispatch($series->id);
+        }
         $this->invalidateSeriesCaches($request->user()->id, $series);
 
         return response()->json([
@@ -587,6 +642,7 @@ class SeriesController extends Controller
                 ->selectRaw('COUNT(series.id) as series_count')
                 ->join('series', 'series.user_id', '=', 'users.id')
                 ->where('series.is_public', true)
+                ->where('series.publication_status', Series::PUBLICATION_PUBLISHED)
                 ->where('series.created_at', '>=', $cutoff)
                 ->whereNotNull('users.name')
                 ->where('users.name', '<>', '')

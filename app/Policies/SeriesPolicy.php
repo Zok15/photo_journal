@@ -11,6 +11,11 @@ use App\Models\User;
  */
 class SeriesPolicy
 {
+    private function isAdmin(User $user): bool
+    {
+        return $user->hasAnyRole(['super_admin', 'moderator']);
+    }
+
     public function viewAny(User $user): bool
     {
         return true;
@@ -18,7 +23,11 @@ class SeriesPolicy
 
     public function view(User $user, Series $series): bool
     {
-        return $series->user_id === $user->id || (bool) $series->is_public;
+        if ($this->isAdmin($user)) {
+            return true;
+        }
+
+        return $series->user_id === $user->id || $series->isPublished();
     }
 
     public function create(User $user): bool
@@ -28,11 +37,26 @@ class SeriesPolicy
 
     public function update(User $user, Series $series): bool
     {
+        if ($this->isAdmin($user)) {
+            return true;
+        }
+
         return $series->user_id === $user->id;
     }
 
     public function delete(User $user, Series $series): bool
     {
+        if ($this->isAdmin($user)) {
+            return true;
+        }
+
         return $series->user_id === $user->id;
+    }
+
+    public function manualPublish(User $user, Series $series): bool
+    {
+        unset($series);
+
+        return $this->isAdmin($user);
     }
 }

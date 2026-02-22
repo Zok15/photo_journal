@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Jobs\ModerateSeriesContent;
 use App\Jobs\ProcessSeries;
 use App\Jobs\SyncSeriesAutoTags;
 use App\Models\Photo;
@@ -122,7 +123,7 @@ class SeriesApiTest extends TestCase
         Queue::assertPushed(SyncSeriesAutoTags::class, 1);
     }
 
-    public function test_store_can_mark_series_as_public(): void
+    public function test_store_public_series_starts_pending_moderation(): void
     {
         Queue::fake();
         config()->set('filesystems.default', 'local');
@@ -137,8 +138,11 @@ class SeriesApiTest extends TestCase
         $response->assertCreated();
         $this->assertDatabaseHas('series', [
             'title' => 'Public series',
-            'is_public' => 1,
+            'is_public' => 0,
+            'publication_status' => Series::PUBLICATION_PENDING_MODERATION,
+            'moderation_status' => Series::MODERATION_PENDING,
         ]);
+        Queue::assertPushed(ModerateSeriesContent::class, 1);
     }
 
     public function test_store_requires_at_least_one_photo(): void
@@ -441,8 +445,10 @@ class SeriesApiTest extends TestCase
         ]);
     }
 
-    public function test_update_can_switch_public_visibility(): void
+    public function test_update_public_visibility_queues_moderation(): void
     {
+        Queue::fake();
+
         $series = Series::query()->create([
             'user_id' => $this->user->id,
             'title' => 'Visibility',
@@ -455,11 +461,15 @@ class SeriesApiTest extends TestCase
         ]);
 
         $response->assertOk();
-        $response->assertJsonPath('data.is_public', true);
+        $response->assertJsonPath('data.is_public', false);
+        $response->assertJsonPath('data.publication_status', Series::PUBLICATION_PENDING_MODERATION);
         $this->assertDatabaseHas('series', [
             'id' => $series->id,
-            'is_public' => 1,
+            'is_public' => 0,
+            'publication_status' => Series::PUBLICATION_PENDING_MODERATION,
+            'moderation_status' => Series::MODERATION_PENDING,
         ]);
+        Queue::assertPushed(ModerateSeriesContent::class, 1);
     }
 
     public function test_index_without_filters_preserves_default_behavior(): void

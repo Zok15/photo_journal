@@ -28,6 +28,20 @@ class SeriesForm
                 Toggle::make('is_public')
                     ->label('Public')
                     ->default(false),
+                TextInput::make('publication_status')
+                    ->label('Publication status')
+                    ->disabled()
+                    ->dehydrated(false),
+                TextInput::make('moderation_status')
+                    ->label('Moderation status')
+                    ->disabled()
+                    ->dehydrated(false),
+                Textarea::make('moderation_reason')
+                    ->label('Moderation reason')
+                    ->rows(2)
+                    ->disabled()
+                    ->dehydrated(false)
+                    ->columnSpanFull(),
             ]);
     }
 }

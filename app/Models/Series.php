@@ -7,16 +7,48 @@ use Illuminate\Support\Str;
 
 class Series extends Model
 {
-    protected $fillable = ['user_id', 'title', 'description', 'is_public', 'slug'];
+    public const PUBLICATION_DRAFT = 'draft';
+    public const PUBLICATION_PENDING_MODERATION = 'pending_moderation';
+    public const PUBLICATION_PUBLISHED = 'published';
+    public const PUBLICATION_REJECTED = 'rejected';
+
+    public const MODERATION_PENDING = 'pending';
+    public const MODERATION_APPROVED = 'approved';
+    public const MODERATION_REJECTED = 'rejected';
+    public const MODERATION_MANUAL_APPROVED = 'manual_approved';
+
+    protected $fillable = [
+        'user_id',
+        'title',
+        'description',
+        'is_public',
+        'slug',
+        'publication_status',
+        'moderation_status',
+        'moderation_reason',
+        'moderation_labels',
+        'publication_requested_at',
+        'moderated_at',
+        'moderated_by',
+    ];
 
     protected $casts = [
         'is_public' => 'boolean',
+        'moderation_labels' => 'array',
+        'publication_requested_at' => 'datetime',
+        'moderated_at' => 'datetime',
     ];
 
     protected static function booted(): void
     {
         static::creating(function (Series $series): void {
             $series->slug = null;
+            $series->publication_status ??= $series->is_public
+                ? self::PUBLICATION_PUBLISHED
+                : self::PUBLICATION_DRAFT;
+            $series->moderation_status ??= $series->is_public
+                ? self::MODERATION_APPROVED
+                : self::MODERATION_APPROVED;
         });
 
         static::created(function (Series $series): void {
@@ -80,5 +112,16 @@ class Series extends Model
     public function tags()
     {
         return $this->belongsToMany(Tag::class);
+    }
+
+    public function moderator()
+    {
+        return $this->belongsTo(User::class, 'moderated_by');
+    }
+
+    public function isPublished(): bool
+    {
+        return (bool) $this->is_public
+            && (string) $this->publication_status === self::PUBLICATION_PUBLISHED;
     }
 }

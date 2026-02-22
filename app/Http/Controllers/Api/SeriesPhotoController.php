@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\ListSeriesPhotosRequest;
 use App\Http\Requests\StoreSeriesPhotosRequest;
 use App\Http\Requests\UpdateSeriesPhotoRequest;
+use App\Jobs\ModerateSeriesContent;
 use App\Jobs\SyncSeriesAutoTags;
 use App\Models\Photo;
 use App\Models\Series;
@@ -75,6 +76,7 @@ class SeriesPhotoController extends Controller
         }
 
         SyncSeriesAutoTags::dispatch($series->id);
+        $this->queueModerationIfNeeded($series);
         $this->invalidateSeriesCaches($series);
 
         return response()->json([
@@ -208,6 +210,7 @@ class SeriesPhotoController extends Controller
         if (! $series->photos()->exists()) {
             $series->tags()->detach();
         }
+        $this->queueModerationIfNeeded($series);
 
         $this->invalidateSeriesCaches($series);
 
@@ -304,6 +307,29 @@ class SeriesPhotoController extends Controller
     {
         SeriesResponseCache::bumpUser((int) $series->user_id);
         SeriesResponseCache::bumpSeries((int) $series->id);
+    }
+
+    private function queueModerationIfNeeded(Series $series): void
+    {
+        $publicationStatus = (string) $series->publication_status;
+
+        if ($publicationStatus !== Series::PUBLICATION_PUBLISHED
+            && $publicationStatus !== Series::PUBLICATION_PENDING_MODERATION) {
+            return;
+        }
+
+        $series->forceFill([
+            'is_public' => false,
+            'publication_status' => Series::PUBLICATION_PENDING_MODERATION,
+            'moderation_status' => Series::MODERATION_PENDING,
+            'publication_requested_at' => now(),
+            'moderation_reason' => null,
+            'moderation_labels' => [],
+            'moderated_at' => null,
+            'moderated_by' => null,
+        ])->save();
+
+        ModerateSeriesContent::dispatch((int) $series->id);
     }
 
     private function touchSeriesForCache(Series $series): void

@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\Api\AuthController;
+use App\Http\Controllers\Api\AdminSeriesModerationController;
 use App\Http\Controllers\Api\ProfileController;
 use App\Http\Controllers\Api\SeriesController;
 use App\Http\Controllers\Api\SeriesPhotoController;
@@ -48,5 +49,10 @@ Route::prefix('v1')->group(function () {
         Route::get('tags', [TagController::class, 'index']);
         Route::post('tags', [TagController::class, 'store']);
         Route::get('tags/suggest', [TagController::class, 'suggest']);
+
+        Route::prefix('admin')->group(function () {
+            Route::get('series', [AdminSeriesModerationController::class, 'index']);
+            Route::post('series/{series}/publish', [AdminSeriesModerationController::class, 'publish']);
+        });
     });
 });
