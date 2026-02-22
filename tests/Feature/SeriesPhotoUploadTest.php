@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Jobs\SyncSeriesAutoTags;
+use App\Jobs\ModerateSeriesContent;
 use App\Models\Series;
 use App\Models\Tag;
 use App\Models\User;
@@ -277,6 +278,37 @@ class SeriesPhotoUploadTest extends TestCase
         $this->assertContains('green', $names);
         $this->assertContains('rose', $names);
         $this->assertContains('2026', $names);
+    }
+
+    public function test_retag_queues_moderation_for_published_series(): void
+    {
+        Queue::fake();
+        config()->set('filesystems.default', 'local');
+        Storage::fake('local');
+
+        $series = Series::query()->create([
+            'user_id' => $this->user->id,
+            'title' => 'Published series',
+            'description' => 'Needs remoderation after retag',
+            'is_public' => true,
+            'publication_status' => Series::PUBLICATION_PUBLISHED,
+            'moderation_status' => Series::MODERATION_APPROVED,
+        ]);
+
+        $upload = $this->post("/api/v1/series/{$series->id}/photos", [
+            'photos' => [$this->fakeImage('flower.jpg')],
+        ]);
+        $upload->assertCreated();
+
+        Queue::fake();
+        $response = $this->postJson("/api/v1/series/{$series->id}/photos/retag");
+        $response->assertOk();
+
+        $series->refresh();
+        $this->assertSame(Series::PUBLICATION_PENDING_MODERATION, $series->publication_status);
+        $this->assertSame(Series::MODERATION_PENDING, $series->moderation_status);
+        $this->assertFalse((bool) $series->is_public);
+        Queue::assertPushed(ModerateSeriesContent::class, 1);
     }
 
     public function test_retag_endpoint_keeps_manual_numeric_tags(): void

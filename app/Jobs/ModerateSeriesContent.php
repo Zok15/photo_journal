@@ -11,6 +11,7 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
 class ModerateSeriesContent implements ShouldQueue, ShouldBeUnique
@@ -50,6 +51,15 @@ class ModerateSeriesContent implements ShouldQueue, ShouldBeUnique
             return;
         }
 
+        if ($this->isVisionEnabledAndUnhealthy()) {
+            Log::warning('Series moderation postponed: vision tagger is enabled but unhealthy.', [
+                'series_id' => $series->id,
+            ]);
+            $this->release(120);
+
+            return;
+        }
+
         $blocked = $this->blockedTagLookup();
         if ($blocked === []) {
             $this->approveSeries($series, []);
@@ -59,11 +69,17 @@ class ModerateSeriesContent implements ShouldQueue, ShouldBeUnique
 
         $disk = config('filesystems.default');
         $matchedHardLabels = [];
-        $observedNormalizedTags = [];
+        $failedPhotos = 0;
         $benignContext = $this->benignContextTagLookup();
         $humanContext = $this->humanContextTagLookup();
         $contextSensitive = $this->contextSensitiveBlockedTagLookup();
+        $contextSensitiveSupport = $this->contextSensitiveSupportTagLookup();
         $contextualRisk = $this->contextualRiskTagLookup();
+        $directContextualBlock = $this->directContextualRiskBlockTagLookup();
+        $directContextualSupport = $this->directContextualRiskSupportTagLookup();
+        $directContextualWeakSupport = $this->directContextualWeakSupportTagLookup();
+        $humanRequiredContextualRisk = $this->humanRequiredContextualRiskTagLookup();
+        $alwaysHumanContextualRisk = $this->alwaysHumanContextualRiskTagLookup();
 
         $series->photos()
             ->orderBy('id')
@@ -75,16 +91,20 @@ class ModerateSeriesContent implements ShouldQueue, ShouldBeUnique
                 $benignContext,
                 $humanContext,
                 $contextSensitive,
+                $contextSensitiveSupport,
                 $contextualRisk,
+                $directContextualBlock,
+                $directContextualSupport,
+                $directContextualWeakSupport,
+                $humanRequiredContextualRisk,
+                $alwaysHumanContextualRisk,
                 &$matchedHardLabels,
-                &$observedNormalizedTags
+                &$failedPhotos
             ): void {
                 foreach ($photos as $photo) {
                     try {
                         $tags = $photoAutoTagger->detectTagsForModeration($photo, $disk, $series);
                         $normalizedTags = [];
-                        $hasBenignContext = false;
-                        $hasHumanContext = false;
 
                         foreach ($tags as $tag) {
                             $normalized = $this->normalizeTag($tag);
@@ -93,37 +113,27 @@ class ModerateSeriesContent implements ShouldQueue, ShouldBeUnique
                             }
 
                             $normalizedTags[] = $normalized;
-                            $observedNormalizedTags[$normalized] = true;
-                            if (isset($benignContext[$normalized])) {
-                                $hasBenignContext = true;
-                            }
-                            if (isset($humanContext[$normalized])) {
-                                $hasHumanContext = true;
-                            }
                         }
 
-                        foreach ($normalizedTags as $normalized) {
-                            $isHardBlocked = isset($blocked[$normalized]);
-                            $isContextualRisk = isset($contextualRisk[$normalized]);
-                            if (!$isHardBlocked && !$isContextualRisk) {
-                                continue;
-                            }
-
-                            if ($hasBenignContext && !$hasHumanContext) {
-                                if ($isContextualRisk) {
-                                    continue;
-                                }
-                                if ($isHardBlocked && isset($contextSensitive[$normalized])) {
-                                    continue;
-                                }
-                            }
-
-                            $label = $blocked[$normalized] ?? $contextualRisk[$normalized];
-                            if ($label !== null) {
-                                $matchedHardLabels[$label] = true;
-                            }
+                        $photoMatched = $this->collectBlockedLabelsFromTags(
+                            $normalizedTags,
+                            $blocked,
+                            $contextualRisk,
+                            $contextSensitive,
+                            $benignContext,
+                            $humanContext,
+                            $directContextualBlock,
+                            $directContextualSupport,
+                            $directContextualWeakSupport,
+                            $contextSensitiveSupport,
+                            $humanRequiredContextualRisk,
+                            $alwaysHumanContextualRisk
+                        );
+                        foreach (array_keys($photoMatched) as $label) {
+                            $matchedHardLabels[$label] = true;
                         }
                     } catch (\Throwable $e) {
+                        $failedPhotos++;
                         Log::warning('Series moderation failed for photo.', [
                             'series_id' => $series->id,
                             'photo_id' => $photo->id,
@@ -133,32 +143,15 @@ class ModerateSeriesContent implements ShouldQueue, ShouldBeUnique
                 }
             });
 
-        $seriesRiskEvidence = [];
-        foreach ($series->tags()->pluck('name')->all() as $tagName) {
-            if (!is_string($tagName)) {
-                continue;
-            }
+        if ($failedPhotos > 0) {
+            Log::warning('Series moderation postponed: one or more photos failed during tagging.', [
+                'series_id' => $series->id,
+                'failed_photos' => $failedPhotos,
+            ]);
+            $this->release(120);
 
-            $normalized = $this->normalizeTag($tagName);
-            if ($normalized === '') {
-                continue;
-            }
-
-            $observedNormalizedTags[$normalized] = true;
-            if (isset($contextualRisk[$normalized])) {
-                $seriesRiskEvidence[$normalized] = true;
-            }
+            return;
         }
-
-        $matchedHardLabels = $this->collectBlockedLabelsFromTags(
-            array_keys($observedNormalizedTags),
-            $blocked,
-            $contextualRisk,
-            $contextSensitive,
-            $benignContext,
-            $humanContext,
-            $seriesRiskEvidence
-        );
 
         $hardLabels = array_keys($matchedHardLabels);
         sort($hardLabels);
@@ -170,6 +163,23 @@ class ModerateSeriesContent implements ShouldQueue, ShouldBeUnique
         }
 
         $this->approveSeries($series, []);
+    }
+
+    private function isVisionEnabledAndUnhealthy(): bool
+    {
+        if (!((bool) config('vision.enabled', false))) {
+            return false;
+        }
+
+        try {
+            $base = (string) config('vision.url', 'http://127.0.0.1:8010/tag');
+            $healthUrl = preg_replace('#/tag$#', '/health', $base) ?: $base;
+            $response = Http::timeout(2)->acceptJson()->get($healthUrl);
+
+            return !$response->ok() || ($response->json('ok') !== true);
+        } catch (\Throwable) {
+            return true;
+        }
     }
 
     /**
@@ -274,11 +284,149 @@ class ModerateSeriesContent implements ShouldQueue, ShouldBeUnique
     /**
      * @return array<string, true>
      */
+    private function contextSensitiveSupportTagLookup(): array
+    {
+        $lookup = [];
+
+        foreach ((array) config('moderation.context_sensitive_support_tags', []) as $tag) {
+            if (!is_string($tag)) {
+                continue;
+            }
+
+            $normalized = $this->normalizeTag($tag);
+            if ($normalized === '') {
+                continue;
+            }
+
+            $lookup[$normalized] = true;
+        }
+
+        return $lookup;
+    }
+
+    /**
+     * @return array<string, true>
+     */
+    private function directContextualRiskBlockTagLookup(): array
+    {
+        $lookup = [];
+
+        foreach ((array) config('moderation.contextual_risk_direct_block_tags', []) as $tag) {
+            if (!is_string($tag)) {
+                continue;
+            }
+
+            $normalized = $this->normalizeTag($tag);
+            if ($normalized === '') {
+                continue;
+            }
+
+            $lookup[$normalized] = true;
+        }
+
+        return $lookup;
+    }
+
+    /**
+     * @return array<string, true>
+     */
     private function humanContextTagLookup(): array
     {
         $lookup = [];
 
         foreach ((array) config('moderation.human_context_tags', []) as $tag) {
+            if (!is_string($tag)) {
+                continue;
+            }
+
+            $normalized = $this->normalizeTag($tag);
+            if ($normalized === '') {
+                continue;
+            }
+
+            $lookup[$normalized] = true;
+        }
+
+        return $lookup;
+    }
+
+    /**
+     * @return array<string, true>
+     */
+    private function directContextualRiskSupportTagLookup(): array
+    {
+        $lookup = [];
+
+        foreach ((array) config('moderation.contextual_risk_direct_support_tags', []) as $tag) {
+            if (!is_string($tag)) {
+                continue;
+            }
+
+            $normalized = $this->normalizeTag($tag);
+            if ($normalized === '') {
+                continue;
+            }
+
+            $lookup[$normalized] = true;
+        }
+
+        return $lookup;
+    }
+
+    /**
+     * @return array<string, true>
+     */
+    private function directContextualWeakSupportTagLookup(): array
+    {
+        $lookup = [];
+
+        foreach ((array) config('moderation.contextual_risk_direct_weak_support_tags', []) as $tag) {
+            if (!is_string($tag)) {
+                continue;
+            }
+
+            $normalized = $this->normalizeTag($tag);
+            if ($normalized === '') {
+                continue;
+            }
+
+            $lookup[$normalized] = true;
+        }
+
+        return $lookup;
+    }
+
+    /**
+     * @return array<string, true>
+     */
+    private function humanRequiredContextualRiskTagLookup(): array
+    {
+        $lookup = [];
+
+        foreach ((array) config('moderation.contextual_risk_requires_human_tags', []) as $tag) {
+            if (!is_string($tag)) {
+                continue;
+            }
+
+            $normalized = $this->normalizeTag($tag);
+            if ($normalized === '') {
+                continue;
+            }
+
+            $lookup[$normalized] = true;
+        }
+
+        return $lookup;
+    }
+
+    /**
+     * @return array<string, true>
+     */
+    private function alwaysHumanContextualRiskTagLookup(): array
+    {
+        $lookup = [];
+
+        foreach ((array) config('moderation.contextual_risk_always_human_tags', []) as $tag) {
             if (!is_string($tag)) {
                 continue;
             }
@@ -301,7 +449,12 @@ class ModerateSeriesContent implements ShouldQueue, ShouldBeUnique
      * @param array<string, true> $contextSensitive
      * @param array<string, true> $benignContext
      * @param array<string, true> $humanContext
-     * @param array<string, true> $seriesRiskEvidence
+     * @param array<string, true> $directContextualBlock
+     * @param array<string, true> $directContextualSupport
+     * @param array<string, true> $directContextualWeakSupport
+     * @param array<string, true> $contextSensitiveSupport
+     * @param array<string, true> $humanRequiredContextualRisk
+     * @param array<string, true> $alwaysHumanContextualRisk
      * @return array<string, true>
      */
     private function collectBlockedLabelsFromTags(
@@ -311,11 +464,19 @@ class ModerateSeriesContent implements ShouldQueue, ShouldBeUnique
         array $contextSensitive,
         array $benignContext,
         array $humanContext,
-        array $seriesRiskEvidence
+        array $directContextualBlock,
+        array $directContextualSupport,
+        array $directContextualWeakSupport,
+        array $contextSensitiveSupport,
+        array $humanRequiredContextualRisk,
+        array $alwaysHumanContextualRisk
     ): array {
         $matched = [];
         $hasBenign = false;
         $hasHuman = false;
+        $hasDirectSupport = false;
+        $hasDirectContextualRisk = false;
+        $hasContextSensitiveSupport = false;
 
         foreach ($normalizedTags as $tag) {
             if (!is_string($tag) || $tag === '') {
@@ -328,6 +489,15 @@ class ModerateSeriesContent implements ShouldQueue, ShouldBeUnique
             if (isset($humanContext[$tag])) {
                 $hasHuman = true;
             }
+            if (isset($directContextualSupport[$tag]) && !isset($directContextualWeakSupport[$tag])) {
+                $hasDirectSupport = true;
+            }
+            if (isset($directContextualBlock[$tag])) {
+                $hasDirectContextualRisk = true;
+            }
+            if (isset($contextSensitiveSupport[$tag])) {
+                $hasContextSensitiveSupport = true;
+            }
         }
 
         foreach ($normalizedTags as $tag) {
@@ -337,18 +507,35 @@ class ModerateSeriesContent implements ShouldQueue, ShouldBeUnique
 
             $isHardBlocked = isset($blocked[$tag]);
             $isContextualRisk = isset($contextualRisk[$tag]);
+            $isDirectContextualBlock = isset($directContextualBlock[$tag]);
             if (!$isHardBlocked && !$isContextualRisk) {
                 continue;
             }
 
-            // Contextual-risk labels must be supported by persisted series tags
-            // to avoid one-frame zero-shot noise.
-            if ($isContextualRisk && !isset($seriesRiskEvidence[$tag])) {
+            if ($isDirectContextualBlock && !$hasDirectSupport) {
+                continue;
+            }
+
+            if ($isHardBlocked && isset($contextSensitive[$tag]) && !$hasHuman && !$hasContextSensitiveSupport) {
+                continue;
+            }
+
+            if ($isContextualRisk && isset($alwaysHumanContextualRisk[$tag]) && !$hasHuman) {
+                continue;
+            }
+
+            if (
+                $isContextualRisk
+                && !$isDirectContextualBlock
+                && isset($humanRequiredContextualRisk[$tag])
+                && !$hasHuman
+                && !$hasDirectContextualRisk
+            ) {
                 continue;
             }
 
             if ($hasBenign && !$hasHuman) {
-                if ($isContextualRisk) {
+                if ($isContextualRisk && !$isDirectContextualBlock) {
                     continue;
                 }
                 if ($isHardBlocked && isset($contextSensitive[$tag])) {

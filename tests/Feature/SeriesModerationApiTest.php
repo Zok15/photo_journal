@@ -20,6 +20,13 @@ class SeriesModerationApiTest extends TestCase
 {
     use RefreshDatabase;
 
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        config()->set('vision.enabled', false);
+    }
+
     public function test_store_public_series_goes_to_pending_moderation(): void
     {
         Queue::fake();
@@ -158,7 +165,7 @@ class SeriesModerationApiTest extends TestCase
         $mock = \Mockery::mock(PhotoAutoTagger::class);
         $mock->shouldReceive('detectTagsForModeration')
             ->once()
-            ->andReturn(['femaleBreast', 'outdoor']);
+            ->andReturn(['femaleBreast', 'sexualContent', 'outdoor']);
         $this->app->instance(PhotoAutoTagger::class, $mock);
 
         (new ModerateSeriesContent($series->id))->handle($mock);
@@ -171,7 +178,76 @@ class SeriesModerationApiTest extends TestCase
         $this->assertContains('femaleBreast', (array) $series->moderation_labels);
     }
 
-    public function test_moderation_rejects_on_contextual_risk_tag_when_supported_by_series_tags(): void
+    public function test_moderation_does_not_reject_context_sensitive_tag_without_human_or_support_context(): void
+    {
+        $author = User::factory()->create();
+        $series = Series::query()->create([
+            'user_id' => $author->id,
+            'title' => 'Night scene',
+            'is_public' => false,
+            'publication_status' => Series::PUBLICATION_PENDING_MODERATION,
+            'moderation_status' => Series::MODERATION_PENDING,
+        ]);
+
+        Photo::query()->create([
+            'series_id' => $series->id,
+            'path' => 'photos/series/night-scene.jpg',
+            'original_name' => 'night-scene.jpg',
+            'size' => 12345,
+            'mime' => 'image/jpeg',
+        ]);
+
+        $mock = \Mockery::mock(PhotoAutoTagger::class);
+        $mock->shouldReceive('detectTagsForModeration')
+            ->once()
+            ->andReturn(['nudity', 'night']);
+        $this->app->instance(PhotoAutoTagger::class, $mock);
+
+        (new ModerateSeriesContent($series->id))->handle($mock);
+
+        $series->refresh();
+
+        $this->assertSame(Series::PUBLICATION_PUBLISHED, $series->publication_status);
+        $this->assertSame(Series::MODERATION_APPROVED, $series->moderation_status);
+        $this->assertTrue((bool) $series->is_public);
+    }
+
+    public function test_moderation_does_not_auto_approve_when_vision_is_enabled_but_unhealthy(): void
+    {
+        config()->set('vision.enabled', true);
+        config()->set('vision.url', 'http://127.0.0.1:65530/tag');
+
+        $author = User::factory()->create();
+        $series = Series::query()->create([
+            'user_id' => $author->id,
+            'title' => 'Vision unavailable',
+            'is_public' => false,
+            'publication_status' => Series::PUBLICATION_PENDING_MODERATION,
+            'moderation_status' => Series::MODERATION_PENDING,
+        ]);
+
+        Photo::query()->create([
+            'series_id' => $series->id,
+            'path' => 'photos/series/vision-unhealthy.jpg',
+            'original_name' => 'vision-unhealthy.jpg',
+            'size' => 12345,
+            'mime' => 'image/jpeg',
+        ]);
+
+        $mock = \Mockery::mock(PhotoAutoTagger::class);
+        $mock->shouldNotReceive('detectTagsForModeration');
+        $this->app->instance(PhotoAutoTagger::class, $mock);
+
+        (new ModerateSeriesContent($series->id))->handle($mock);
+
+        $series->refresh();
+
+        $this->assertSame(Series::PUBLICATION_PENDING_MODERATION, $series->publication_status);
+        $this->assertSame(Series::MODERATION_PENDING, $series->moderation_status);
+        $this->assertFalse((bool) $series->is_public);
+    }
+
+    public function test_moderation_does_not_reject_direct_contextual_risk_without_support_tags(): void
     {
         $author = User::factory()->create();
         $series = Series::query()->create([
@@ -189,9 +265,6 @@ class SeriesModerationApiTest extends TestCase
             'size' => 1000,
             'mime' => 'image/jpeg',
         ]);
-        $riskTag = Tag::query()->firstOrCreate(['name' => 'sexualContent']);
-        $series->tags()->syncWithoutDetaching([$riskTag->id => ['source' => 'auto']]);
-
         $mock = \Mockery::mock(PhotoAutoTagger::class);
         $mock->shouldReceive('detectTagsForModeration')
             ->once()
@@ -202,13 +275,12 @@ class SeriesModerationApiTest extends TestCase
 
         $series->refresh();
 
-        $this->assertSame(Series::PUBLICATION_REJECTED, $series->publication_status);
-        $this->assertSame(Series::MODERATION_REJECTED, $series->moderation_status);
-        $this->assertFalse((bool) $series->is_public);
-        $this->assertContains('sexualContent', (array) $series->moderation_labels);
+        $this->assertSame(Series::PUBLICATION_PUBLISHED, $series->publication_status);
+        $this->assertSame(Series::MODERATION_APPROVED, $series->moderation_status);
+        $this->assertTrue((bool) $series->is_public);
     }
 
-    public function test_moderation_does_not_reject_contextual_risk_tags_in_benign_context(): void
+    public function test_moderation_does_not_reject_non_direct_contextual_risk_tags_in_benign_context(): void
     {
         $author = User::factory()->create();
         $series = Series::query()->create([
@@ -235,8 +307,8 @@ class SeriesModerationApiTest extends TestCase
         ]);
 
         $mock = \Mockery::mock(PhotoAutoTagger::class);
-        $riskA = Tag::query()->firstOrCreate(['name' => 'sexualContent']);
-        $riskB = Tag::query()->firstOrCreate(['name' => 'adultContent']);
+        $riskA = Tag::query()->firstOrCreate(['name' => 'weapon']);
+        $riskB = Tag::query()->firstOrCreate(['name' => 'violence']);
         $series->tags()->syncWithoutDetaching([
             $riskA->id => ['source' => 'auto'],
             $riskB->id => ['source' => 'auto'],
@@ -244,8 +316,8 @@ class SeriesModerationApiTest extends TestCase
         $mock->shouldReceive('detectTagsForModeration')
             ->twice()
             ->andReturn(
-                ['sexualContent', 'flower'],
-                ['adultContent', 'plant']
+                ['weapon', 'flower'],
+                ['violence', 'plant']
             );
         $this->app->instance(PhotoAutoTagger::class, $mock);
 
@@ -258,7 +330,7 @@ class SeriesModerationApiTest extends TestCase
         $this->assertTrue((bool) $series->is_public);
     }
 
-    public function test_moderation_does_not_reject_contextual_risk_without_series_tag_evidence(): void
+    public function test_moderation_does_not_reject_human_required_contextual_risk_without_human_context(): void
     {
         $author = User::factory()->create();
         $series = Series::query()->create([
@@ -289,6 +361,181 @@ class SeriesModerationApiTest extends TestCase
         $this->assertSame(Series::PUBLICATION_PUBLISHED, $series->publication_status);
         $this->assertSame(Series::MODERATION_APPROVED, $series->moderation_status);
         $this->assertTrue((bool) $series->is_public);
+    }
+
+    public function test_moderation_rejects_human_required_contextual_risk_when_direct_risk_is_present(): void
+    {
+        $author = User::factory()->create();
+        $series = Series::query()->create([
+            'user_id' => $author->id,
+            'title' => 'Adult risk combo',
+            'is_public' => false,
+            'publication_status' => Series::PUBLICATION_PENDING_MODERATION,
+            'moderation_status' => Series::MODERATION_PENDING,
+        ]);
+
+        Photo::query()->create([
+            'series_id' => $series->id,
+            'path' => 'photos/series/adult-risk-combo.jpg',
+            'original_name' => 'adult-risk-combo.jpg',
+            'size' => 1000,
+            'mime' => 'image/jpeg',
+        ]);
+
+        $mock = \Mockery::mock(PhotoAutoTagger::class);
+        $mock->shouldReceive('detectTagsForModeration')
+            ->once()
+            ->andReturn(['pornography', 'adultContent']);
+        $this->app->instance(PhotoAutoTagger::class, $mock);
+
+        (new ModerateSeriesContent($series->id))->handle($mock);
+
+        $series->refresh();
+        $this->assertSame(Series::PUBLICATION_REJECTED, $series->publication_status);
+        $this->assertSame(Series::MODERATION_REJECTED, $series->moderation_status);
+        $this->assertFalse((bool) $series->is_public);
+        $this->assertContains('pornography', (array) $series->moderation_labels);
+    }
+
+    public function test_moderation_does_not_reject_weapon_without_human_context_even_with_direct_risk_noise(): void
+    {
+        $author = User::factory()->create();
+        $series = Series::query()->create([
+            'user_id' => $author->id,
+            'title' => 'Weapon noise',
+            'is_public' => false,
+            'publication_status' => Series::PUBLICATION_PENDING_MODERATION,
+            'moderation_status' => Series::MODERATION_PENDING,
+        ]);
+
+        Photo::query()->create([
+            'series_id' => $series->id,
+            'path' => 'photos/series/weapon-noise.jpg',
+            'original_name' => 'weapon-noise.jpg',
+            'size' => 1000,
+            'mime' => 'image/jpeg',
+        ]);
+
+        $mock = \Mockery::mock(PhotoAutoTagger::class);
+        $mock->shouldReceive('detectTagsForModeration')
+            ->once()
+            ->andReturn(['weapon', 'sexualContent', 'drink']);
+        $this->app->instance(PhotoAutoTagger::class, $mock);
+
+        (new ModerateSeriesContent($series->id))->handle($mock);
+
+        $series->refresh();
+        $this->assertSame(Series::PUBLICATION_PUBLISHED, $series->publication_status);
+        $this->assertSame(Series::MODERATION_APPROVED, $series->moderation_status);
+        $this->assertTrue((bool) $series->is_public);
+    }
+
+    public function test_moderation_is_not_suppressed_by_series_search_tags(): void
+    {
+        $author = User::factory()->create();
+        $series = Series::query()->create([
+            'user_id' => $author->id,
+            'title' => 'Search tags do not affect moderation',
+            'is_public' => false,
+            'publication_status' => Series::PUBLICATION_PENDING_MODERATION,
+            'moderation_status' => Series::MODERATION_PENDING,
+        ]);
+
+        Photo::query()->create([
+            'series_id' => $series->id,
+            'path' => 'photos/series/manual-tags.jpg',
+            'original_name' => 'manual-tags.jpg',
+            'size' => 1000,
+            'mime' => 'image/jpeg',
+        ]);
+
+        $flower = Tag::query()->firstOrCreate(['name' => 'flower']);
+        $bird = Tag::query()->firstOrCreate(['name' => 'bird']);
+        $series->tags()->syncWithoutDetaching([
+            $flower->id => ['source' => 'manual'],
+            $bird->id => ['source' => 'manual'],
+        ]);
+
+        $mock = \Mockery::mock(PhotoAutoTagger::class);
+        $mock->shouldReceive('detectTagsForModeration')
+            ->once()
+            ->andReturn(['adultContent', 'nude']);
+        $this->app->instance(PhotoAutoTagger::class, $mock);
+
+        (new ModerateSeriesContent($series->id))->handle($mock);
+
+        $series->refresh();
+        $this->assertSame(Series::PUBLICATION_REJECTED, $series->publication_status);
+        $this->assertSame(Series::MODERATION_REJECTED, $series->moderation_status);
+        $this->assertFalse((bool) $series->is_public);
+        $this->assertContains('adultContent', (array) $series->moderation_labels);
+    }
+
+    public function test_moderation_does_not_reject_direct_contextual_risk_with_only_closeup_support(): void
+    {
+        $author = User::factory()->create();
+        $series = Series::query()->create([
+            'user_id' => $author->id,
+            'title' => 'Direct risk',
+            'is_public' => false,
+            'publication_status' => Series::PUBLICATION_PENDING_MODERATION,
+            'moderation_status' => Series::MODERATION_PENDING,
+        ]);
+
+        Photo::query()->create([
+            'series_id' => $series->id,
+            'path' => 'photos/series/direct-risk.jpg',
+            'original_name' => 'direct-risk.jpg',
+            'size' => 1000,
+            'mime' => 'image/jpeg',
+        ]);
+
+        $mock = \Mockery::mock(PhotoAutoTagger::class);
+        $mock->shouldReceive('detectTagsForModeration')
+            ->once()
+            ->andReturn(['adultContent', 'closeup']);
+        $this->app->instance(PhotoAutoTagger::class, $mock);
+
+        (new ModerateSeriesContent($series->id))->handle($mock);
+
+        $series->refresh();
+        $this->assertSame(Series::PUBLICATION_PUBLISHED, $series->publication_status);
+        $this->assertSame(Series::MODERATION_APPROVED, $series->moderation_status);
+        $this->assertTrue((bool) $series->is_public);
+    }
+
+    public function test_moderation_rejects_human_required_contextual_risk_with_human_context(): void
+    {
+        $author = User::factory()->create();
+        $series = Series::query()->create([
+            'user_id' => $author->id,
+            'title' => 'Violence with people',
+            'is_public' => false,
+            'publication_status' => Series::PUBLICATION_PENDING_MODERATION,
+            'moderation_status' => Series::MODERATION_PENDING,
+        ]);
+
+        Photo::query()->create([
+            'series_id' => $series->id,
+            'path' => 'photos/series/violence.jpg',
+            'original_name' => 'violence.jpg',
+            'size' => 1000,
+            'mime' => 'image/jpeg',
+        ]);
+
+        $mock = \Mockery::mock(PhotoAutoTagger::class);
+        $mock->shouldReceive('detectTagsForModeration')
+            ->once()
+            ->andReturn(['weapon', 'people', 'street']);
+        $this->app->instance(PhotoAutoTagger::class, $mock);
+
+        (new ModerateSeriesContent($series->id))->handle($mock);
+
+        $series->refresh();
+        $this->assertSame(Series::PUBLICATION_REJECTED, $series->publication_status);
+        $this->assertSame(Series::MODERATION_REJECTED, $series->moderation_status);
+        $this->assertFalse((bool) $series->is_public);
+        $this->assertContains('weapon', (array) $series->moderation_labels);
     }
 
     public function test_sync_tags_rejects_already_published_series_on_hard_nsfw_tag(): void

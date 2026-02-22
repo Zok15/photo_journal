@@ -16,9 +16,33 @@ return [
         static fn (string $value): string => trim($value),
         explode(',', (string) env('MODERATION_CONTEXT_SENSITIVE_BLOCKED_TAGS', 'femaleBreast,topless,nudity,nude,explicitNudity'))
     ))),
+    'context_sensitive_support_tags' => array_values(array_filter(array_map(
+        static fn (string $value): string => trim($value),
+        explode(',', (string) env('MODERATION_CONTEXT_SENSITIVE_SUPPORT_TAGS', 'sexualContent,adultContent,pornography,nsfw'))
+    ))),
     'contextual_risk_tags' => array_values(array_filter(array_map(
         static fn (string $value): string => trim($value),
         explode(',', (string) env('MODERATION_CONTEXTUAL_RISK_TAGS', 'pornography,nsfw,sexualContent,adultContent,weapon,violence,blood,gore'))
+    ))),
+    'contextual_risk_direct_block_tags' => array_values(array_filter(array_map(
+        static fn (string $value): string => trim($value),
+        explode(',', (string) env('MODERATION_CONTEXTUAL_RISK_DIRECT_BLOCK_TAGS', 'sexualContent,adultContent'))
+    ))),
+    'contextual_risk_direct_support_tags' => array_values(array_filter(array_map(
+        static fn (string $value): string => trim($value),
+        explode(',', (string) env('MODERATION_CONTEXTUAL_RISK_DIRECT_SUPPORT_TAGS', 'explicitNudity,nudity,nude,topless,femaleBreast'))
+    ))),
+    'contextual_risk_direct_weak_support_tags' => array_values(array_filter(array_map(
+        static fn (string $value): string => trim($value),
+        explode(',', (string) env('MODERATION_CONTEXTUAL_RISK_DIRECT_WEAK_SUPPORT_TAGS', 'closeup'))
+    ))),
+    'contextual_risk_requires_human_tags' => array_values(array_filter(array_map(
+        static fn (string $value): string => trim($value),
+        explode(',', (string) env('MODERATION_CONTEXTUAL_RISK_REQUIRES_HUMAN_TAGS', 'pornography,nsfw,weapon,violence,blood,gore'))
+    ))),
+    'contextual_risk_always_human_tags' => array_values(array_filter(array_map(
+        static fn (string $value): string => trim($value),
+        explode(',', (string) env('MODERATION_CONTEXTUAL_RISK_ALWAYS_HUMAN_TAGS', 'weapon,violence,blood,gore'))
     ))),
     'benign_context_tags' => array_values(array_filter(array_map(
         static fn (string $value): string => trim($value),
