@@ -165,7 +165,6 @@ class SeriesPhotoController extends Controller
         $this->authorize('update', $series);
 
         ['processed' => $processed, 'failed' => $failed] = $this->rebuildSeriesTagsFromPhotos($series);
-        $this->queueModerationIfNeeded($series);
         $this->invalidateSeriesCaches($series);
 
         return response()->json([
@@ -211,7 +210,6 @@ class SeriesPhotoController extends Controller
         if (! $series->photos()->exists()) {
             $series->tags()->detach();
         }
-        $this->queueModerationIfNeeded($series);
 
         $this->invalidateSeriesCaches($series);
 
