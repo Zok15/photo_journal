@@ -27,6 +27,11 @@ class PhotoAutoTagger
     {
     }
 
+    /**
+     * @var array<string, true>|null
+     */
+    private ?array $moderationOnlyTagLookup = null;
+
     private const STOPWORDS = [
         'img', 'image', 'photo', 'picture', 'snapshot', 'scan', 'camera',
         'copy', 'final', 'new', 'temp', 'test', 'edited', 'edit', 'small',
@@ -126,7 +131,11 @@ class PhotoAutoTagger
      */
     public function detectTagsForPhoto(Photo $photo, string $disk, ?Series $series = null): array
     {
-        return $this->buildTagNames($photo, $disk, $series, false);
+        return collect($this->buildTagNames($photo, $disk, $series, false, false))
+            ->filter(fn ($value): bool => is_string($value) && $value !== '')
+            ->filter(fn (string $value): bool => !$this->isModerationOnlyTag($value))
+            ->values()
+            ->all();
     }
 
     /**
@@ -135,7 +144,7 @@ class PhotoAutoTagger
     public function detectTagsForModeration(Photo $photo, string $disk, ?Series $series = null): array
     {
         // For moderation we must always call vision to avoid misses caused by local-tag skip threshold.
-        return $this->buildTagNames($photo, $disk, $series, true);
+        return $this->buildTagNames($photo, $disk, $series, true, true);
     }
 
     public function attachPhotoTagsToSeries(Series $series, Photo $photo, string $disk): void
@@ -226,10 +235,16 @@ class PhotoAutoTagger
     public function syncSeriesTags(Series $series, array $tagNames, bool $replace = true): void
     {
         // Нормализация + ограничение количества тегов, чтобы держать данные чистыми.
-        $normalized = collect($tagNames)
+        $normalizedAll = collect($tagNames)
             ->filter(fn ($value): bool => is_string($value) && $value !== '')
             ->map(fn (string $value): string => $this->normalizeTag($value))
             ->filter()
+            ->unique()
+            ->take(self::MAX_TAGS)
+            ->values();
+
+        $normalized = $normalizedAll
+            ->filter(fn (string $value): bool => !$this->isModerationOnlyTag($value))
             ->filter(fn (string $value): bool => !$this->isRejectedAutoTag($value))
             ->unique()
             ->take(self::MAX_TAGS)
@@ -296,7 +311,7 @@ class PhotoAutoTagger
             $this->touchSeriesForCache($series);
         }
 
-        $this->applySafetyAuditForPublishedSeries($series, $normalized->all());
+        $this->applySafetyAuditForPublishedSeries($series, $normalizedAll->all());
     }
 
     /**
@@ -343,7 +358,13 @@ class PhotoAutoTagger
     /**
      * @return array<int, string>
      */
-    private function buildTagNames(Photo $photo, string $disk, ?Series $series = null, bool $forceVision = false): array
+    private function buildTagNames(
+        Photo $photo,
+        string $disk,
+        ?Series $series = null,
+        bool $forceVision = false,
+        bool $moderationMode = false
+    ): array
     {
         $all = [];
 
@@ -375,7 +396,7 @@ class PhotoAutoTagger
                 ->all();
         }
 
-        $visionHints = $this->buildVisionHints($preparedBeforeVision, $series);
+        $visionHints = $this->buildVisionHints($preparedBeforeVision, $series, $moderationMode);
         $all = [...$all, ...$this->visionTaggerClient->detectTags($disk, (string) $photo->path, $visionHints)];
 
         return $this->normalizeAndDedupeTags($all)
@@ -388,12 +409,24 @@ class PhotoAutoTagger
      * @param \Illuminate\Support\Collection<int, string> $preparedBeforeVision
      * @return array<int, string>
      */
-    private function buildVisionHints(\Illuminate\Support\Collection $preparedBeforeVision, ?Series $series): array
+    private function buildVisionHints(
+        \Illuminate\Support\Collection $preparedBeforeVision,
+        ?Series $series,
+        bool $moderationMode = false
+    ): array
     {
         $fromPhoto = $preparedBeforeVision
             ->take(12)
             ->values()
             ->all();
+
+        if ($moderationMode) {
+            // Moderation is isolated from series/search tagging context.
+            return $this->normalizeAndDedupeTags($fromPhoto)
+                ->take((int) config('vision.max_hints', 20))
+                ->values()
+                ->all();
+        }
 
         $fromSeries = [];
         if ($series !== null) {
@@ -418,6 +451,52 @@ class PhotoAutoTagger
             ->take((int) config('vision.max_hints', 20))
             ->values()
             ->all();
+    }
+
+    private function isModerationOnlyTag(string $tag): bool
+    {
+        $normalized = strtolower(preg_replace('/[^a-z0-9]+/i', '', trim($tag)) ?? '');
+        if ($normalized === '') {
+            return false;
+        }
+
+        return isset($this->moderationOnlyTagLookup()[$normalized]);
+    }
+
+    /**
+     * @return array<string, true>
+     */
+    private function moderationOnlyTagLookup(): array
+    {
+        if ($this->moderationOnlyTagLookup !== null) {
+            return $this->moderationOnlyTagLookup;
+        }
+
+        $lookup = [];
+        $source = array_merge(
+            (array) config('moderation.blocked_tags', []),
+            (array) config('moderation.contextual_risk_tags', []),
+            (array) config('moderation.context_sensitive_blocked_tags', []),
+            (array) config('moderation.soft_blocked_tags', []),
+            (array) config('moderation.contextual_risk_direct_block_tags', [])
+        );
+
+        foreach ($source as $tag) {
+            if (!is_string($tag)) {
+                continue;
+            }
+
+            $normalized = strtolower(preg_replace('/[^a-z0-9]+/i', '', trim($tag)) ?? '');
+            if ($normalized === '') {
+                continue;
+            }
+
+            $lookup[$normalized] = true;
+        }
+
+        $this->moderationOnlyTagLookup = $lookup;
+
+        return $this->moderationOnlyTagLookup;
     }
 
     /**

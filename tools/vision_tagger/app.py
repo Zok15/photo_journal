@@ -47,9 +47,16 @@ SAFETY_LABELS = [
     "nude",
     "nudity",
     "explicitNudity",
+    "nakedBody",
     "pornography",
+    "sex",
+    "explicitSex",
     "topless",
+    "breast",
+    "breasts",
     "femaleBreast",
+    "nipples",
+    "genitals",
     "sexualContent",
     "adultContent",
     "violence",
@@ -167,7 +174,7 @@ HINT_SCORE_BOOST = float(os.getenv("VISION_TAGGER_HINT_BOOST", "0.06"))
 MAX_HINTS = int(os.getenv("VISION_TAGGER_MAX_HINTS", "20"))
 MAX_TAGS = int(os.getenv("VISION_TAGGER_MAX_TAGS", "10"))
 SAFETY_MIN_SCORE = float(os.getenv("VISION_TAGGER_SAFETY_MIN_CONFIDENCE", "0.18"))
-MAX_SAFETY_TAGS = int(os.getenv("VISION_TAGGER_MAX_SAFETY_TAGS", "3"))
+MAX_SAFETY_TAGS = int(os.getenv("VISION_TAGGER_MAX_SAFETY_TAGS", "5"))
 ENABLE_MULTI_VIEW = os.getenv("VISION_TAGGER_ENABLE_MULTI_VIEW", "1").strip().lower() not in {
     "0", "false", "no", "off"
 }
@@ -212,10 +219,21 @@ def build_tag_alias_map() -> dict:
 
 
 TAG_ALIAS_MAP = build_tag_alias_map()
+CUSTOM_TAG_ALIASES = {
+    "sex": "pornography",
+    "explicitsex": "pornography",
+    "nakedbody": "nudity",
+    "genitals": "explicitNudity",
+    "breast": "femaleBreast",
+    "breasts": "femaleBreast",
+    "nipples": "femaleBreast",
+}
 
 
 def normalize_tag(label: str) -> str:
     collapsed = re.sub(r"[^A-Za-z0-9]+", "", str(label)).lower()
+    if collapsed in CUSTOM_TAG_ALIASES:
+        return CUSTOM_TAG_ALIASES[collapsed]
     if collapsed in TAG_ALIAS_MAP:
         return TAG_ALIAS_MAP[collapsed]
 
@@ -405,7 +423,6 @@ async def tag_image(
 
     # Safety moderation labels (nudity/violence/self-harm etc.).
     safety_candidates = classify_labels(pil, SAFETY_LABELS, SAFETY_MIN_SCORE, use_multi_view=True)
-    safety_candidates = filter_competitive(safety_candidates, SAFETY_MIN_SCORE)
     safety_candidates = top_labels(safety_candidates, MAX_SAFETY_TAGS)
     tags_with_score.extend(safety_candidates)
 
