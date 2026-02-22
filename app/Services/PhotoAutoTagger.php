@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Models\Photo;
 use App\Models\Series;
 use App\Models\Tag;
+use App\Support\SeriesResponseCache;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
@@ -125,7 +126,16 @@ class PhotoAutoTagger
      */
     public function detectTagsForPhoto(Photo $photo, string $disk, ?Series $series = null): array
     {
-        return $this->buildTagNames($photo, $disk, $series);
+        return $this->buildTagNames($photo, $disk, $series, false);
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    public function detectTagsForModeration(Photo $photo, string $disk, ?Series $series = null): array
+    {
+        // For moderation we must always call vision to avoid misses caused by local-tag skip threshold.
+        return $this->buildTagNames($photo, $disk, $series, true);
     }
 
     public function attachPhotoTagsToSeries(Series $series, Photo $photo, string $disk): void
@@ -235,6 +245,8 @@ class PhotoAutoTagger
         if ($attached !== [] || $detached !== []) {
             $this->touchSeriesForCache($series);
         }
+
+        $this->applySafetyAuditForPublishedSeries($series, $normalized->all());
     }
 
     /**
@@ -281,7 +293,7 @@ class PhotoAutoTagger
     /**
      * @return array<int, string>
      */
-    private function buildTagNames(Photo $photo, string $disk, ?Series $series = null): array
+    private function buildTagNames(Photo $photo, string $disk, ?Series $series = null, bool $forceVision = false): array
     {
         $all = [];
 
@@ -306,7 +318,7 @@ class PhotoAutoTagger
         $skipVisionThreshold = max(0, (int) config('vision.skip_if_tags_count_at_least', 7));
 
         // Если уже достаточно тегов локально — можно не дергать внешний сервис.
-        if ($skipVisionThreshold > 0 && $preparedBeforeVision->count() >= $skipVisionThreshold) {
+        if (!$forceVision && $skipVisionThreshold > 0 && $preparedBeforeVision->count() >= $skipVisionThreshold) {
             return $preparedBeforeVision
                 ->take(self::MAX_TAGS)
                 ->values()
@@ -505,6 +517,83 @@ class PhotoAutoTagger
     private function currentYearTag(): string
     {
         return (string) now()->year;
+    }
+
+    /**
+     * @param array<int, string> $normalizedTags
+     */
+    private function applySafetyAuditForPublishedSeries(Series $series, array $normalizedTags): void
+    {
+        if ((string) $series->publication_status !== Series::PUBLICATION_PUBLISHED) {
+            return;
+        }
+
+        if ((string) $series->moderation_status === Series::MODERATION_MANUAL_APPROVED) {
+            return;
+        }
+
+        $hardBlocked = $this->hardBlockedTagLookup();
+        if ($hardBlocked === []) {
+            return;
+        }
+
+        $matched = [];
+        foreach ($normalizedTags as $tag) {
+            if (!is_string($tag)) {
+                continue;
+            }
+
+            $key = strtolower(preg_replace('/[^a-z0-9]+/i', '', trim($tag)) ?? '');
+            if ($key === '' || !isset($hardBlocked[$key])) {
+                continue;
+            }
+
+            $matched[$hardBlocked[$key]] = true;
+        }
+
+        if ($matched === []) {
+            return;
+        }
+
+        $labels = array_keys($matched);
+        sort($labels);
+
+        $series->forceFill([
+            'is_public' => false,
+            'publication_status' => Series::PUBLICATION_REJECTED,
+            'moderation_status' => Series::MODERATION_REJECTED,
+            'moderation_reason' => 'Blocked content detected during automatic moderation.',
+            'moderation_labels' => $labels,
+            'moderated_at' => now(),
+            'moderated_by' => null,
+        ])->save();
+
+        SeriesResponseCache::bumpUser((int) $series->user_id);
+        SeriesResponseCache::bumpSeries((int) $series->id);
+    }
+
+    /**
+     * @return array<string, string>
+     */
+    private function hardBlockedTagLookup(): array
+    {
+        $lookup = [];
+
+        foreach ((array) config('moderation.blocked_tags', []) as $tag) {
+            if (!is_string($tag)) {
+                continue;
+            }
+
+            $clean = trim($tag);
+            $normalized = strtolower(preg_replace('/[^a-z0-9]+/i', '', $clean) ?? '');
+            if ($clean === '' || $normalized === '') {
+                continue;
+            }
+
+            $lookup[$normalized] = $clean;
+        }
+
+        return $lookup;
     }
 
     /**

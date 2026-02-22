@@ -41,6 +41,24 @@ CATEGORY_LABELS = [
     "macro", "closeup",
 ]
 
+# Stage for safety/moderation-sensitive labels.
+SAFETY_LABELS = [
+    "nsfw",
+    "nude",
+    "nudity",
+    "explicitNudity",
+    "pornography",
+    "topless",
+    "femaleBreast",
+    "sexualContent",
+    "adultContent",
+    "violence",
+    "gore",
+    "blood",
+    "weapon",
+    "selfHarm",
+]
+
 # Stage 2: species-level labels by zoological group.
 MAMMAL_SPECIES_LABELS = [
     "dog", "cat", "horse", "cow", "sheep", "goat", "pig",
@@ -148,6 +166,8 @@ MAX_SPECIES_PER_GROUP = int(os.getenv("VISION_TAGGER_MAX_SPECIES_PER_GROUP", "3"
 HINT_SCORE_BOOST = float(os.getenv("VISION_TAGGER_HINT_BOOST", "0.06"))
 MAX_HINTS = int(os.getenv("VISION_TAGGER_MAX_HINTS", "20"))
 MAX_TAGS = int(os.getenv("VISION_TAGGER_MAX_TAGS", "10"))
+SAFETY_MIN_SCORE = float(os.getenv("VISION_TAGGER_SAFETY_MIN_CONFIDENCE", "0.18"))
+MAX_SAFETY_TAGS = int(os.getenv("VISION_TAGGER_MAX_SAFETY_TAGS", "3"))
 ENABLE_MULTI_VIEW = os.getenv("VISION_TAGGER_ENABLE_MULTI_VIEW", "1").strip().lower() not in {
     "0", "false", "no", "off"
 }
@@ -166,6 +186,7 @@ def build_tag_alias_map() -> dict:
     aliases = {}
     all_labels = [
         *CATEGORY_LABELS,
+        *SAFETY_LABELS,
         *MAMMAL_SPECIES_LABELS,
         *BIRD_SPECIES_LABELS,
         *FISH_SPECIES_LABELS,
@@ -382,6 +403,12 @@ async def tag_image(
         group_candidates = top_labels(group_candidates, MAX_SPECIES_PER_GROUP)
         tags_with_score.extend(group_candidates)
 
+    # Safety moderation labels (nudity/violence/self-harm etc.).
+    safety_candidates = classify_labels(pil, SAFETY_LABELS, SAFETY_MIN_SCORE, use_multi_view=True)
+    safety_candidates = filter_competitive(safety_candidates, SAFETY_MIN_SCORE)
+    safety_candidates = top_labels(safety_candidates, MAX_SAFETY_TAGS)
+    tags_with_score.extend(safety_candidates)
+
     # Optional hint rerank: gently prefer already existing tags when they are present.
     hints = parse_tag_hints(tag_hints)
     if hints:
@@ -396,8 +423,25 @@ async def tag_image(
         if label not in best or score > best[label]:
             best[label] = score
 
-    # Sort by confidence and cap count.
-    ordered = sorted(best.items(), key=lambda item: item[1], reverse=True)
-    tags = [label for label, _ in ordered[:MAX_TAGS]]
+    # Keep safety labels first so they are never dropped by max-tag limit.
+    safety_by_score = sorted(safety_candidates, key=lambda item: item[1], reverse=True)
+    safety_labels = []
+    safety_seen = set()
+    for label, _ in safety_by_score:
+        if label in safety_seen:
+            continue
+        if label not in best:
+            continue
+        safety_seen.add(label)
+        safety_labels.append(label)
+
+    # Fill the remaining slots with strongest non-safety tags.
+    ordered_general = sorted(
+        [(label, score) for label, score in best.items() if label not in safety_seen],
+        key=lambda item: item[1],
+        reverse=True,
+    )
+    remaining = max(0, MAX_TAGS - len(safety_labels))
+    tags = safety_labels + [label for label, _ in ordered_general[:remaining]]
 
     return {"tags": tags}
