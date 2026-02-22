@@ -6,6 +6,7 @@ use App\Jobs\SyncSeriesAutoTags;
 use App\Models\Series;
 use App\Models\Tag;
 use App\Models\User;
+use App\Services\VisionTaggerClient;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Queue;
@@ -210,6 +211,43 @@ class SeriesPhotoUploadTest extends TestCase
         $this->assertContains('red', $names);
         $this->assertContains('rose', $names);
         $this->assertContains('2026', $names);
+    }
+
+    public function test_retag_endpoint_filters_garbage_tags_from_vision_output(): void
+    {
+        config()->set('filesystems.default', 'local');
+        config()->set('vision.enabled', true);
+        Storage::fake('local');
+
+        $series = Series::query()->create([
+            'user_id' => $this->user->id,
+            'title' => 'Vision cleanup',
+            'description' => 'Garbage tags',
+        ]);
+
+        $upload = $this->post("/api/v1/series/{$series->id}/photos", [
+            'photos' => [$this->fakeImage('flower.jpg')],
+        ]);
+        $upload->assertCreated();
+
+        $series->tags()->detach();
+
+        $vision = \Mockery::mock(VisionTaggerClient::class);
+        $vision->shouldReceive('isEnabled')->andReturn(true);
+        $vision->shouldReceive('isHealthy')->andReturn(true);
+        $vision->shouldReceive('detectTags')
+            ->andReturn(['qv7xrvzbeasaatbaaaaaa', 'mh', 'akv68qycaolyvwvp', 'novyiTegProverka', 'flower']);
+        $this->app->instance(VisionTaggerClient::class, $vision);
+
+        $response = $this->postJson("/api/v1/series/{$series->id}/photos/retag");
+        $response->assertOk();
+
+        $names = $series->fresh()->load('tags')->tags->pluck('name')->all();
+        $this->assertContains('flower', $names);
+        $this->assertNotContains('qv7xrvzbeasaatbaaaaaa', $names);
+        $this->assertNotContains('mh', $names);
+        $this->assertNotContains('akv68qycaolyvwvp', $names);
+        $this->assertNotContains('novyiTegProverka', $names);
     }
 
     public function test_upload_and_retag_work_with_slug_route_key(): void

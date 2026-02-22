@@ -33,7 +33,7 @@ class PhotoAutoTagger
         'large', 'original', 'pxl', 'dsc', 'dscn', 'mvimg', 'picsart',
         'jpg', 'jpeg', 'png', 'webp', 'heic', 'raw',
         'foto', 'fota', 'fotka', 'kartinka', 'izobrazhenie', 'skrinshot',
-        'bez', 'papki', 'novyj', 'novyi', 'proba',
+        'bez', 'papki', 'novyj', 'novyi', 'proba', 'proverka', 'debug', 'demo', 'sample', 'example',
     ];
 
     private const LOW_VALUE_AUTO_TAGS = [
@@ -164,6 +164,56 @@ class PhotoAutoTagger
 
         // Machine-like ids (img1234, dsc2494, pxl991122) have low retrieval value.
         if (preg_match('/^(img|dsc|dscn|pxl|mvimg|photo|image)\d+$/', $normalized) === 1) {
+            return true;
+        }
+
+        if ($this->isLikelyGarbageAutoTag($normalized)) {
+            return true;
+        }
+
+        return false;
+    }
+
+    private function isLikelyGarbageAutoTag(string $tag): bool
+    {
+        $length = strlen($tag);
+
+        // Two-char tags are usually noise from model outputs and hurt retrieval quality.
+        if ($length < 3) {
+            return true;
+        }
+
+        $lowered = strtolower($tag);
+        if (str_contains($lowered, 'proverka') || str_contains($lowered, 'test')) {
+            return true;
+        }
+
+        // Hash-like tags (hex blobs) are not user-meaningful.
+        if ($length >= 12 && preg_match('/^[a-f0-9]+$/', $tag) === 1) {
+            return true;
+        }
+
+        $hasLetter = preg_match('/[a-z]/', $tag) === 1;
+        $hasDigit = preg_match('/\d/', $tag) === 1;
+
+        // Mixed long alphanumeric tokens are typically generated garbage.
+        if ($length >= 8 && $hasLetter && $hasDigit) {
+            return true;
+        }
+
+        // Long runs of the same char are almost always garbage labels.
+        if (preg_match('/(.)\1{4,}/', $tag) === 1) {
+            return true;
+        }
+
+        // No-vowel long words are likely random consonant sequences.
+        $vowelCount = preg_match_all('/[aeiouy]/', $tag);
+        if ($length >= 8 && $vowelCount === 0) {
+            return true;
+        }
+
+        // Very long consonant/digit stretches are low-value machine noise.
+        if ($length >= 10 && preg_match('/[bcdfghjklmnpqrstvwxyz0-9]{6,}/', $tag) === 1 && $vowelCount <= 2) {
             return true;
         }
 

@@ -13,11 +13,29 @@ use Illuminate\Validation\Rule;
  */
 class ProfileController extends Controller
 {
+    private function makeProfilePayload(User $user): array
+    {
+        return [
+            'id' => $user->id,
+            'name' => $user->name,
+            'email' => $user->email,
+            'journal_title' => $user->journal_title,
+            'locale' => $user->locale,
+            'email_verified_at' => $user->email_verified_at,
+            'created_at' => $user->created_at,
+            'updated_at' => $user->updated_at,
+            'can_moderate' => $user->hasAnyRole(['super_admin', 'moderator']),
+        ];
+    }
+
     public function show(Request $request): JsonResponse
     {
         // Возвращаем пользователя из текущего токена.
+        /** @var User $user */
+        $user = $request->user();
+
         return response()->json([
-            'data' => $request->user(),
+            'data' => $this->makeProfilePayload($user),
         ]);
     }
 
@@ -42,9 +60,11 @@ class ProfileController extends Controller
         ]);
 
         $user->update($data);
+        /** @var User $fresh */
+        $fresh = $user->fresh();
 
         return response()->json([
-            'data' => $user->fresh(),
+            'data' => $this->makeProfilePayload($fresh),
         ]);
     }
 }
