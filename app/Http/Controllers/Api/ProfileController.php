@@ -59,7 +59,18 @@ class ProfileController extends Controller
             ],
         ]);
 
-        $user->update($data);
+        $emailChanged = array_key_exists('email', $data) && (string) $data['email'] !== (string) $user->email;
+
+        $user->fill($data);
+        if ($emailChanged) {
+            $user->email_verified_at = null;
+        }
+        $user->save();
+
+        if ($emailChanged) {
+            $user->sendEmailVerificationNotification();
+        }
+
         /** @var User $fresh */
         $fresh = $user->fresh();
 

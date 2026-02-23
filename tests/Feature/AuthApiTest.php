@@ -177,6 +177,37 @@ class AuthApiTest extends TestCase
         $response->assertJsonValidationErrors(['email']);
     }
 
+    public function test_update_me_email_change_resets_verification_and_sends_verification_notification(): void
+    {
+        Notification::fake();
+
+        $user = User::factory()->create([
+            'email' => 'before@example.com',
+            'email_verified_at' => now(),
+            'locale' => 'en',
+        ]);
+
+        Sanctum::actingAs($user);
+
+        $response = $this->patchJson('/api/v1/profile', [
+            'email' => 'after@example.com',
+        ]);
+
+        $response->assertOk();
+        $response->assertJsonPath('data.email', 'after@example.com');
+        $response->assertJsonPath('data.email_verified_at', null);
+
+        $fresh = $user->fresh();
+        $this->assertSame('after@example.com', $fresh->email);
+        $this->assertNull($fresh->email_verified_at);
+
+        Notification::assertSentTo(
+            $fresh,
+            LocalizedVerifyEmail::class,
+            fn (LocalizedVerifyEmail $notification): bool => $notification->locale === 'en'
+        );
+    }
+
     public function test_profile_alias_auth_me_is_equivalent_for_patch(): void
     {
         $user = User::factory()->create([
