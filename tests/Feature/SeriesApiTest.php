@@ -87,6 +87,30 @@ class SeriesApiTest extends TestCase
         $this->assertTrue($previewPhotos->every(fn (array $row): bool => array_key_exists('path', $row)));
     }
 
+    public function test_index_uses_generated_preview_path_for_preview_url_when_available(): void
+    {
+        config()->set('filesystems.default', 'local');
+        Storage::fake('local');
+
+        $series = Series::query()->create([
+            'user_id' => $this->user->id,
+            'title' => 'Preview variant',
+        ]);
+
+        $series->photos()->create([
+            'path' => "photos/series/{$series->id}/source.jpg",
+            'preview_path' => "photos/series/{$series->id}/previews/source_w640.webp",
+            'original_name' => 'source.jpg',
+        ]);
+
+        $response = $this->getJson('/api/v1/series');
+        $response->assertOk();
+
+        $previewUrl = (string) ($response->json('data.0.preview_photos.0.preview_url') ?? '');
+        $this->assertNotSame('', $previewUrl);
+        $this->assertStringContainsString('/previews/source_w640.webp', $previewUrl);
+    }
+
     public function test_store_creates_series_and_dispatches_processing_job(): void
     {
         Queue::fake();

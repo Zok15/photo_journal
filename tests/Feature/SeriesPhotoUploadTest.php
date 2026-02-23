@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Jobs\ProcessSeries;
 use App\Jobs\SyncSeriesAutoTags;
 use App\Models\Series;
 use App\Models\Tag;
@@ -72,6 +73,7 @@ class SeriesPhotoUploadTest extends TestCase
             Storage::disk('local')->assertExists($path);
         }
 
+        Queue::assertPushed(ProcessSeries::class, 1);
         Queue::assertPushed(SyncSeriesAutoTags::class, 1);
     }
 

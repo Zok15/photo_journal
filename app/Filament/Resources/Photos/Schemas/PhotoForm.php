@@ -18,7 +18,12 @@ class PhotoForm
                     ->preload()
                     ->required(),
                 TextInput::make('path')
+                    ->label('Original Path')
                     ->required()
+                    ->maxLength(255)
+                    ->columnSpanFull(),
+                TextInput::make('preview_path')
+                    ->label('Preview Path')
                     ->maxLength(255)
                     ->columnSpanFull(),
                 TextInput::make('original_name')
@@ -28,11 +33,6 @@ class PhotoForm
                 TextInput::make('size')
                     ->numeric()
                     ->minValue(0),
-                Select::make('tags')
-                    ->relationship('tags', 'name')
-                    ->multiple()
-                    ->searchable()
-                    ->preload(),
             ]);
     }
 }

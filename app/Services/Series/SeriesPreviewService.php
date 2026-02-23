@@ -32,7 +32,7 @@ class SeriesPreviewService
         $disk = (string) config('filesystems.default');
 
         $rankedPhotos = DB::table('photos')
-            ->select(['id', 'series_id', 'path', 'original_name'])
+            ->select(['id', 'series_id', 'path', 'preview_path', 'original_name'])
             ->selectRaw(
                 'ROW_NUMBER() OVER (
                     PARTITION BY series_id
@@ -57,8 +57,12 @@ class SeriesPreviewService
             $map[$seriesId][] = [
                 'id' => (int) $photo->id,
                 'path' => $photo->path,
+                'preview_path' => $photo->preview_path,
                 'original_name' => $photo->original_name,
-                'preview_url' => $this->seriesPhotoUrlService->resolvePreviewUrl($disk, $photo->path),
+                'preview_url' => $this->seriesPhotoUrlService->resolvePreviewUrl(
+                    $disk,
+                    $photo->preview_path ?: $photo->path
+                ),
                 'public_url' => $this->seriesPhotoUrlService->resolvePublicUrl($disk, $photo->path),
             ];
         }

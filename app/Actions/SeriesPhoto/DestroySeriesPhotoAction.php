@@ -15,7 +15,11 @@ class DestroySeriesPhotoAction
 
     public function execute(Series $series, Photo $photo, string $disk): void
     {
-        Storage::disk($disk)->delete($photo->path);
+        $paths = array_values(array_filter([
+            $photo->path,
+            $photo->preview_path,
+        ]));
+        Storage::disk($disk)->delete($paths);
 
         $photo->delete();
         $this->seriesCacheService->touchForConditionalCache($series);

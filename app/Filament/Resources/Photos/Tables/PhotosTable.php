@@ -23,14 +23,21 @@ class PhotosTable
                 TextColumn::make('original_name')
                     ->searchable()
                     ->sortable(),
+                TextColumn::make('path')
+                    ->label('Original Path')
+                    ->searchable()
+                    ->wrap()
+                    ->toggleable(),
+                TextColumn::make('preview_path')
+                    ->label('Preview Path')
+                    ->searchable()
+                    ->wrap()
+                    ->toggleable(),
                 TextColumn::make('mime')
                     ->searchable(),
                 TextColumn::make('size')
                     ->numeric()
                     ->sortable(),
-                TextColumn::make('tags.name')
-                    ->badge()
-                    ->separator(', '),
                 TextColumn::make('created_at')
                     ->dateTime()
                     ->sortable(),

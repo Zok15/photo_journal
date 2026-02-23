@@ -40,7 +40,10 @@ class ShowPublicSeriesAction
             ]);
 
             $series->photos->each(function ($photo) use ($disk): void {
-                $photo->setAttribute('preview_url', $this->seriesPhotoUrlService->resolvePreviewUrl($disk, $photo->path));
+                $photo->setAttribute('preview_url', $this->seriesPhotoUrlService->resolvePreviewUrl(
+                    $disk,
+                    $photo->preview_path ?: $photo->path
+                ));
                 $photo->setAttribute('public_url', $this->seriesPhotoUrlService->resolvePublicUrl($disk, $photo->path));
             });
         }

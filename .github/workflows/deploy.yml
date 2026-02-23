@@ -65,6 +65,40 @@ jobs:
           git fetch origin main --prune
           git pull --ff-only origin main
 
+          if [ "$(id -u)" -eq 0 ]; then
+            SUDO=""
+          elif sudo -n /bin/systemctl status "${VISION_TAGGER_SERVICE:-vision-tagger}" >/dev/null 2>&1; then
+            SUDO="sudo -n"
+          else
+            echo "Passwordless sudo is required for deploy user (${DEPLOY_USER}) to manage services."
+            echo "Configure NOPASSWD for systemctl and tee in /etc/sudoers.d/."
+            exit 1
+          fi
+
+          if php -m | grep -qi '^gd$'; then
+            echo "PHP GD extension is already enabled."
+          else
+            echo "PHP GD extension is missing. Installing..."
+            if ! command -v apt-get >/dev/null 2>&1; then
+              echo "apt-get is not available. Install PHP GD extension manually."
+              exit 1
+            fi
+
+            PHP_MM="$(php -r 'echo PHP_MAJOR_VERSION.\".\".PHP_MINOR_VERSION;')"
+            PHP_GD_PACKAGE="php${PHP_MM}-gd"
+
+            $SUDO apt-get update -y
+            if ! $SUDO apt-get install -y "$PHP_GD_PACKAGE"; then
+              echo "Package ${PHP_GD_PACKAGE} not found, trying generic php-gd..."
+              $SUDO apt-get install -y php-gd
+            fi
+
+            if ! php -m | grep -qi '^gd$'; then
+              echo "PHP GD extension installation failed."
+              exit 1
+            fi
+          fi
+
           composer install --no-dev --optimize-autoloader --no-interaction --prefer-dist
 
           php artisan migrate --force
@@ -75,16 +109,6 @@ jobs:
 
           php artisan storage:link || true
           php artisan queue:restart || true
-
-          if [ "$(id -u)" -eq 0 ]; then
-            SUDO=""
-          elif sudo -n /bin/systemctl status "${VISION_TAGGER_SERVICE:-vision-tagger}" >/dev/null 2>&1; then
-            SUDO="sudo -n"
-          else
-            echo "Passwordless sudo is required for deploy user (${DEPLOY_USER}) to manage services."
-            echo "Configure NOPASSWD for systemctl and tee in /etc/sudoers.d/."
-            exit 1
-          fi
 
           $SUDO systemctl reload "$PHP_FPM_SERVICE" || true
 

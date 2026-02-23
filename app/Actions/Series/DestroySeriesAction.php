@@ -15,7 +15,13 @@ class DestroySeriesAction
     public function execute(Series $series, string $disk): void
     {
         $photoPaths = $series->photos()
-            ->pluck('path')
+            ->get(['path', 'preview_path'])
+            ->flatMap(function ($photo): array {
+                return array_values(array_filter([
+                    $photo->path,
+                    $photo->preview_path,
+                ]));
+            })
             ->filter()
             ->values()
             ->all();

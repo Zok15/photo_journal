@@ -2,6 +2,7 @@
 
 namespace App\Actions\SeriesPhoto;
 
+use App\Jobs\ProcessSeries;
 use App\Jobs\ModerateSeriesContent;
 use App\Jobs\SyncSeriesAutoTags;
 use App\Models\Series;
@@ -36,6 +37,7 @@ class StoreSeriesPhotosAction
             ];
         }
 
+        ProcessSeries::dispatch($series->id);
         SyncSeriesAutoTags::dispatch($series->id);
         $this->queueModerationIfNeeded($series);
         $this->seriesCacheService->invalidateForSeries($series);

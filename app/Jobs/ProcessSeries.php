@@ -4,6 +4,7 @@ namespace App\Jobs;
 
 use App\Events\SeriesUploaded;
 use App\Models\Series;
+use App\Services\Series\SeriesPreviewGenerator;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
@@ -43,8 +44,8 @@ class ProcessSeries implements ShouldQueue
 
     private function generatePreviews(Series $series): void
     {
-        // Placeholder for staged preview generation rollout.
-        unset($series);
+        $disk = (string) config('filesystems.default');
+        app(SeriesPreviewGenerator::class)->generateForSeries($series, $disk);
     }
 
     private function extractExif(Series $series): void
