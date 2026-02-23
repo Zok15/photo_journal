@@ -5,6 +5,7 @@ namespace App\Filament\Resources\Users\Schemas;
 use Filament\Forms\Components\DateTimePicker;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\TextInput;
+use Filament\Forms\Components\Toggle;
 use Filament\Schemas\Schema;
 
 class UserForm
@@ -21,11 +22,29 @@ class UserForm
                     ->required()
                     ->maxLength(255)
                     ->unique(ignoreRecord: true),
+                Toggle::make('email_verified')
+                    ->label('Email verified')
+                    ->dehydrated(false)
+                    ->afterStateHydrated(function (Toggle $component, $state, $record): void {
+                        unset($state);
+
+                        $component->state(filled($record?->email_verified_at));
+                    })
+                    ->live()
+                    ->afterStateUpdated(function (bool $state, callable $set): void {
+                        if (! $state) {
+                            $set('email_verified_at', null);
+                            return;
+                        }
+
+                        $set('email_verified_at', now());
+                    }),
                 DateTimePicker::make('email_verified_at')
                     ->label('Email verified at')
                     ->seconds(false)
                     ->native(false)
-                    ->nullable(),
+                    ->nullable()
+                    ->dehydrateStateUsing(static fn ($state) => blank($state) ? null : $state),
                 TextInput::make('password')
                     ->password()
                     ->required(fn (string $operation): bool => $operation === 'create')
