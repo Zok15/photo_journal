@@ -145,6 +145,50 @@ class SeriesApiTest extends TestCase
         Queue::assertPushed(ModerateSeriesContent::class, 1);
     }
 
+    public function test_unverified_user_cannot_store_series(): void
+    {
+        Queue::fake();
+        config()->set('filesystems.default', 'local');
+        Storage::fake('local');
+
+        $unverified = User::factory()->unverified()->create();
+        Sanctum::actingAs($unverified);
+
+        $response = $this->post('/api/v1/series', [
+            'title' => 'Unverified draft',
+            'photos' => [$this->fakeImage('unverified.jpg')],
+        ]);
+
+        $response->assertForbidden();
+        $this->assertDatabaseMissing('series', [
+            'user_id' => $unverified->id,
+            'title' => 'Unverified draft',
+        ]);
+    }
+
+    public function test_unverified_user_cannot_store_public_series(): void
+    {
+        Queue::fake();
+        config()->set('filesystems.default', 'local');
+        Storage::fake('local');
+
+        $unverified = User::factory()->unverified()->create();
+        Sanctum::actingAs($unverified);
+
+        $response = $this->post('/api/v1/series', [
+            'title' => 'Unverified public',
+            'is_public' => true,
+            'photos' => [$this->fakeImage('unverified-public.jpg')],
+        ]);
+
+        $response->assertForbidden();
+        $this->assertDatabaseMissing('series', [
+            'user_id' => $unverified->id,
+            'title' => 'Unverified public',
+        ]);
+        Queue::assertNothingPushed();
+    }
+
     public function test_store_requires_at_least_one_photo(): void
     {
         $response = $this->postJson('/api/v1/series', [

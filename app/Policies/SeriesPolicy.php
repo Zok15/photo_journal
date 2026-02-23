@@ -32,7 +32,7 @@ class SeriesPolicy
 
     public function create(User $user): bool
     {
-        return true;
+        return $user->hasVerifiedEmail();
     }
 
     public function update(User $user, Series $series): bool
