@@ -65,6 +65,28 @@ class AuthApiTest extends TestCase
         );
     }
 
+    public function test_verification_notification_uses_frontend_verify_page_url(): void
+    {
+        config()->set('app.frontend_url', 'https://photolog.org');
+
+        $user = User::factory()->unverified()->create([
+            'email' => 'verify-link@example.com',
+        ]);
+
+        $notification = new LocalizedVerifyEmail('en');
+        $method = new \ReflectionMethod($notification, 'verificationUrl');
+        $method->setAccessible(true);
+        $url = (string) $method->invoke($notification, $user);
+
+        $this->assertStringStartsWith('https://photolog.org/verify-email?', $url);
+
+        parse_str((string) parse_url($url, PHP_URL_QUERY), $query);
+        $this->assertSame((string) $user->id, (string) ($query['id'] ?? ''));
+        $this->assertSame(sha1($user->email), (string) ($query['hash'] ?? ''));
+        $this->assertNotSame('', (string) ($query['expires'] ?? ''));
+        $this->assertNotSame('', (string) ($query['signature'] ?? ''));
+    }
+
     public function test_login_returns_token_for_valid_credentials(): void
     {
         User::factory()->create([
