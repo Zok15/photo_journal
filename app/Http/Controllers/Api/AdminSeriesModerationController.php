@@ -24,7 +24,7 @@ class AdminSeriesModerationController extends Controller
 
         $series = Series::query()
             ->where('publication_status', $status)
-            ->with('user:id,name,email')
+            ->with('user')
             ->withCount('photos')
             ->latest()
             ->paginate($perPage)

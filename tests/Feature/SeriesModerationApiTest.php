@@ -126,6 +126,40 @@ class SeriesModerationApiTest extends TestCase
         ]);
     }
 
+    public function test_admin_series_list_returns_all_public_user_fields_without_sensitive_values(): void
+    {
+        $admin = User::factory()->create();
+        Role::query()->firstOrCreate(['name' => 'moderator']);
+        $admin->assignRole('moderator');
+
+        $author = User::factory()->create([
+            'journal_title' => 'My Journal',
+            'locale' => 'en',
+            'email_verified_at' => now(),
+        ]);
+
+        $series = Series::query()->create([
+            'user_id' => $author->id,
+            'title' => 'Pending with author payload',
+            'is_public' => false,
+            'publication_status' => Series::PUBLICATION_PENDING_MODERATION,
+            'moderation_status' => Series::MODERATION_PENDING,
+        ]);
+
+        Sanctum::actingAs($admin);
+
+        $list = $this->getJson('/api/v1/admin/series');
+        $list->assertOk();
+        $list->assertJsonPath('data.0.id', $series->id);
+        $list->assertJsonPath('data.0.user.id', $author->id);
+        $list->assertJsonPath('data.0.user.email', $author->email);
+        $list->assertJsonPath('data.0.user.journal_title', 'My Journal');
+        $list->assertJsonPath('data.0.user.locale', 'en');
+        $list->assertJsonPath('data.0.user.email_verified_at', $author->email_verified_at?->toJSON());
+        $list->assertJsonMissingPath('data.0.user.password');
+        $list->assertJsonMissingPath('data.0.user.remember_token');
+    }
+
     public function test_admin_can_publish_rejected_series_without_additional_checks(): void
     {
         $admin = User::factory()->create();
