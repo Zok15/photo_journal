@@ -34,19 +34,7 @@ jobs:
         with:
           ssh-private-key: ${{ secrets.SSH_KEY }}
 
-      - name: Deploy code to server (rsync)
-        run: |
-          rsync -az --delete \
-            --exclude ".git/" \
-            --exclude "node_modules/" \
-            --exclude "vendor/" \
-            --exclude ".env" \
-            --exclude "storage/" \
-            --exclude "bootstrap/cache/" \
-            -e "ssh -p ${{ secrets.SSH_PORT }} -o StrictHostKeyChecking=no" \
-            ./ ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:${{ secrets.BACKEND_PATH }}/
-
-      - name: Run Laravel commands on server
+      - name: Pull code and run deploy commands on server
         env:
           BACKEND_PATH: ${{ secrets.BACKEND_PATH }}
           PHP_FPM_SERVICE: ${{ secrets.PHP_FPM_SERVICE }}
@@ -61,6 +49,21 @@ jobs:
           set -euo pipefail
 
           cd "$BACKEND_PATH"
+
+          if [ ! -d ".git" ]; then
+            echo "Expected a git repository at BACKEND_PATH=$BACKEND_PATH"
+            exit 1
+          fi
+
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "Refusing to deploy: working tree has uncommitted changes in $BACKEND_PATH"
+            echo "Commit/revert local changes on server and rerun deploy."
+            git status --short
+            exit 1
+          fi
+
+          git fetch origin main --prune
+          git pull --ff-only origin main
 
           composer install --no-dev --optimize-autoloader --no-interaction --prefer-dist
 
