@@ -2,24 +2,24 @@
 
 namespace App\Http\Controllers\Api;
 
+use App\Actions\Series\AttachSeriesTagsAction;
+use App\Actions\Series\DestroySeriesAction;
+use App\Actions\Series\DetachSeriesTagAction;
+use App\Actions\Series\StoreSeriesAction;
+use App\Actions\Series\UpdateSeriesAction;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\StoreSeriesWithPhotosRequest;
-use App\Jobs\ModerateSeriesContent;
-use App\Jobs\ProcessSeries;
-use App\Jobs\SyncSeriesAutoTags;
 use App\Models\Series;
 use App\Models\Tag;
 use App\Models\User;
-use App\Services\PhotoBatchUploader;
+use App\Services\Series\SeriesPhotoUrlService;
 use App\Support\SeriesResponseCache;
-use Illuminate\Database\QueryException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Storage;
 
 /**
  * Основной API-контроллер фотосерий.
@@ -31,9 +31,14 @@ use Illuminate\Support\Facades\Storage;
  */
 class SeriesController extends Controller
 {
-    public function __construct(private PhotoBatchUploader $photoBatchUploader)
-    {
-    }
+    public function __construct(
+        private SeriesPhotoUrlService $seriesPhotoUrlService,
+        private StoreSeriesAction $storeSeriesAction,
+        private UpdateSeriesAction $updateSeriesAction,
+        private DestroySeriesAction $destroySeriesAction,
+        private AttachSeriesTagsAction $attachSeriesTagsAction,
+        private DetachSeriesTagAction $detachSeriesTagAction
+    ) {}
 
     public function index(Request $request): JsonResponse
     {
@@ -329,8 +334,8 @@ class SeriesController extends Controller
             ]);
 
             $series->photos->each(function ($photo) use ($disk): void {
-                $photo->setAttribute('preview_url', $this->resolvePhotoPreviewUrl($disk, $photo->path));
-                $photo->setAttribute('public_url', $this->resolvePhotoPublicUrl($disk, $photo->path));
+                $photo->setAttribute('preview_url', $this->seriesPhotoUrlService->resolvePreviewUrl($disk, $photo->path));
+                $photo->setAttribute('public_url', $this->seriesPhotoUrlService->resolvePublicUrl($disk, $photo->path));
             });
         }
 
@@ -363,60 +368,14 @@ class SeriesController extends Controller
     {
         $this->authorize('create', Series::class);
 
-        $data = $request->validated();
+        $result = $this->storeSeriesAction->execute(
+            (int) $request->user()->id,
+            $request->validated(),
+            $request->file('photos', []),
+            (string) config('filesystems.default')
+        );
 
-        $disk = config('filesystems.default');
-        $files = $request->file('photos', []);
-        $requestedPublic = (bool) ($data['is_public'] ?? false);
-        $series = Series::create([
-            'user_id' => $request->user()->id,
-            'title' => $data['title'],
-            'description' => $data['description'] ?? null,
-            'is_public' => false,
-            'publication_status' => $requestedPublic
-                ? Series::PUBLICATION_PENDING_MODERATION
-                : Series::PUBLICATION_DRAFT,
-            'moderation_status' => $requestedPublic
-                ? Series::MODERATION_PENDING
-                : Series::MODERATION_APPROVED,
-            'publication_requested_at' => $requestedPublic ? now() : null,
-            'moderation_reason' => null,
-            'moderation_labels' => [],
-            'moderated_at' => null,
-            'moderated_by' => null,
-        ]);
-
-        $uploadResult = $this->photoBatchUploader->uploadToSeries($series, $files, $disk);
-        $created = $uploadResult['created'];
-        $failed = $uploadResult['failed'];
-
-        if (count($created) === 0) {
-            $series->delete();
-
-            return response()->json([
-                'message' => 'No photos were saved.',
-                'photos_failed' => $failed,
-            ], 422);
-        }
-
-        ProcessSeries::dispatch($series->id);
-        SyncSeriesAutoTags::dispatch($series->id);
-        if ($requestedPublic) {
-            ModerateSeriesContent::dispatch($series->id);
-        }
-        // Инвалидация версий кеша после создания серии.
-        $this->invalidateSeriesCaches($request->user()->id, $series);
-
-        return response()->json([
-            'id' => $series->id,
-            'slug' => $series->slug,
-            'status' => 'queued',
-            'photos_created' => $created,
-            'photos_failed' => $failed,
-            'tags_sync' => 'queued',
-            'publication_status' => $series->publication_status,
-            'moderation_status' => $series->moderation_status,
-        ], 201);
+        return response()->json($result['payload'], $result['status']);
     }
 
     public function show(Request $request, Series $series): JsonResponse
@@ -442,8 +401,8 @@ class SeriesController extends Controller
             ]);
 
             $series->photos->each(function ($photo) use ($disk): void {
-                $photo->setAttribute('preview_url', $this->resolvePhotoPreviewUrl($disk, $photo->path));
-                $photo->setAttribute('public_url', $this->resolvePhotoPublicUrl($disk, $photo->path));
+                $photo->setAttribute('preview_url', $this->seriesPhotoUrlService->resolvePreviewUrl($disk, $photo->path));
+                $photo->setAttribute('public_url', $this->seriesPhotoUrlService->resolvePublicUrl($disk, $photo->path));
             });
         }
 
@@ -480,47 +439,14 @@ class SeriesController extends Controller
     {
         $this->authorize('update', $series);
 
-        $data = $request->validate([
+        $result = $this->updateSeriesAction->execute($series, $request->validate([
             'title' => ['sometimes', 'required', 'string', 'max:255'],
             'description' => ['sometimes', 'nullable', 'string'],
             'is_public' => ['sometimes', 'boolean'],
-        ]);
-
-        $requestedPublic = array_key_exists('is_public', $data) ? (bool) $data['is_public'] : null;
-        unset($data['is_public']);
-
-        $series->fill($data);
-
-        if ($requestedPublic === true && ! $series->isPublished()) {
-            $series->forceFill([
-                'is_public' => false,
-                'publication_status' => Series::PUBLICATION_PENDING_MODERATION,
-                'moderation_status' => Series::MODERATION_PENDING,
-                'publication_requested_at' => now(),
-                'moderation_reason' => null,
-                'moderation_labels' => [],
-                'moderated_at' => null,
-                'moderated_by' => null,
-            ]);
-        }
-
-        if ($requestedPublic === false) {
-            $series->forceFill([
-                'is_public' => false,
-                'publication_status' => Series::PUBLICATION_DRAFT,
-                'publication_requested_at' => null,
-            ]);
-        }
-
-        $series->save();
-
-        if ($requestedPublic === true && (string) $series->publication_status === Series::PUBLICATION_PENDING_MODERATION) {
-            ModerateSeriesContent::dispatch($series->id);
-        }
-        $this->invalidateSeriesCaches($request->user()->id, $series);
+        ]));
 
         return response()->json([
-            'data' => $series->fresh()->loadCount('photos')->load('tags'),
+            'data' => $result['data'],
         ]);
     }
 
@@ -528,20 +454,7 @@ class SeriesController extends Controller
     {
         $this->authorize('delete', $series);
 
-        $disk = config('filesystems.default');
-        $photoPaths = $series->photos()
-            ->pluck('path')
-            ->filter()
-            ->values()
-            ->all();
-
-        $series->delete();
-
-        if (! empty($photoPaths)) {
-            Storage::disk($disk)->delete($photoPaths);
-        }
-
-        $this->invalidateSeriesCaches((int) $series->user_id, $series);
+        $this->destroySeriesAction->execute($series, (string) config('filesystems.default'));
 
         return response()->json(status: 204);
     }
@@ -555,77 +468,19 @@ class SeriesController extends Controller
             'tags.*' => ['required', 'string', 'max:120'],
         ]);
 
-        $names = $this->normalizeTagNames($data['tags']);
-        if ($names === []) {
-            return response()->json([
-                'message' => 'At least one valid tag is required.',
-            ], 422);
-        }
+        $result = $this->attachSeriesTagsAction->execute($series, $data['tags']);
 
-        $tagIds = collect($names)
-            ->map(fn (string $name): Tag => $this->findOrCreateTagSafely($name))
-            ->pluck('id')
-            ->map(fn ($id): int => (int) $id)
-            ->unique()
-            ->values()
-            ->all();
-
-        $existingIds = DB::table('series_tag')
-            ->where('series_id', $series->id)
-            ->pluck('tag_id')
-            ->map(fn ($id): int => (int) $id)
-            ->all();
-
-        $toAttach = array_values(array_diff($tagIds, $existingIds));
-        if ($toAttach !== []) {
-            DB::table('series_tag')->insert(
-                collect($toAttach)
-                    ->map(fn (int $tagId): array => [
-                        'series_id' => $series->id,
-                        'tag_id' => $tagId,
-                        'source' => 'manual',
-                    ])
-                    ->all()
-            );
-        }
-
-        $forcedManual = DB::table('series_tag')
-            ->where('series_id', $series->id)
-            ->whereIn('tag_id', $tagIds)
-            ->where('source', '!=', 'manual')
-            ->update(['source' => 'manual']);
-
-        if ($toAttach !== [] || $forcedManual > 0) {
-            $this->touchSeriesForCache($series);
-        }
-
-        $this->invalidateSeriesCaches((int) $series->user_id, $series);
-
-        return response()->json([
-            'data' => $series->fresh()->loadCount('photos')->load('tags'),
-        ]);
+        return response()->json($result['payload'], $result['status']);
     }
 
     public function detachTag(Series $series, Tag $tag): JsonResponse
     {
         $this->authorize('update', $series);
 
-        $detached = $series->tags()->detach($tag->id);
-        if ($detached > 0) {
-            $this->touchSeriesForCache($series);
-        }
-
-        // Keep tag table compact: remove tags that are no longer referenced.
-        $stillUsedInSeries = $tag->series()->exists();
-        $stillUsedInPhotos = $tag->photos()->exists();
-        if (! $stillUsedInSeries && ! $stillUsedInPhotos) {
-            $tag->delete();
-        }
-
-        $this->invalidateSeriesCaches((int) $series->user_id, $series);
+        $result = $this->detachSeriesTagAction->execute($series, $tag);
 
         return response()->json([
-            'data' => $series->fresh()->loadCount('photos')->load('tags'),
+            'data' => $result['data'],
         ]);
     }
 
@@ -668,71 +523,6 @@ class SeriesController extends Controller
         }
 
         return [];
-    }
-
-    private function resolvePhotoPreviewUrl(string $disk, ?string $path): ?string
-    {
-        if ($path === null || $path === '') {
-            return null;
-        }
-
-        $storage = Storage::disk($disk);
-        $useSignedUrls = (bool) config('photo_processing.preview_signed_urls', false);
-        $isPrivateLocalDisk = $this->isPrivateLocalDisk($disk);
-
-        // Private local disk files are not publicly reachable via Storage::url().
-        // Keep temporary URLs enabled for this case to avoid broken previews.
-        if ($isPrivateLocalDisk) {
-            $useSignedUrls = true;
-        }
-
-        if ($useSignedUrls) {
-            $ttlMinutes = max(1, (int) config('photo_processing.preview_signed_ttl_minutes', 30));
-
-            try {
-                return $storage->temporaryUrl($path, Carbon::now()->addMinutes($ttlMinutes));
-            } catch (\Throwable) {
-                // Фолбэк на обычный URL, если драйвер не умеет signed temporary URLs.
-                return $storage->url($path);
-            }
-        }
-
-        return $storage->url($path);
-    }
-
-    private function resolvePhotoPublicUrl(string $disk, ?string $path): ?string
-    {
-        if ($path === null || $path === '') {
-            return null;
-        }
-
-        if ($this->isPrivateLocalDisk($disk)) {
-            return null;
-        }
-
-        try {
-            return Storage::disk($disk)->url($path);
-        } catch (\Throwable) {
-            return null;
-        }
-    }
-
-    private function isPrivateLocalDisk(string $disk): bool
-    {
-        $driver = (string) config("filesystems.disks.{$disk}.driver", '');
-        $root = (string) config("filesystems.disks.{$disk}.root", '');
-
-        return $driver === 'local' && $root === storage_path('app/private');
-    }
-
-    private function normalizeTagNames(array $tags): array
-    {
-        return collect($tags)
-            ->map(fn (string $name): string => Tag::normalizeTagName($name))
-            ->filter()
-            ->unique()
-            ->values()
-            ->all();
     }
 
     /**
@@ -785,45 +575,12 @@ class SeriesController extends Controller
                 'id' => (int) $photo->id,
                 'path' => $photo->path,
                 'original_name' => $photo->original_name,
-                'preview_url' => $this->resolvePhotoPreviewUrl($disk, $photo->path),
-                'public_url' => $this->resolvePhotoPublicUrl($disk, $photo->path),
+                'preview_url' => $this->seriesPhotoUrlService->resolvePreviewUrl($disk, $photo->path),
+                'public_url' => $this->seriesPhotoUrlService->resolvePublicUrl($disk, $photo->path),
             ];
         }
 
         return $map;
-    }
-
-    private function findOrCreateTagSafely(string $name): Tag
-    {
-        try {
-            $tag = Tag::firstOrCreate(['name' => $name]);
-
-            // MySQL collations are often case-insensitive; normalize existing rows to canonical case.
-            if ($tag->name !== $name) {
-                $tag->name = $name;
-                $tag->save();
-                $tag->refresh();
-            }
-
-            return $tag;
-        } catch (QueryException $e) {
-            $sqlState = $e->errorInfo[0] ?? null;
-
-            if ($sqlState === '23000') {
-                $existing = Tag::query()->where('name', $name)->first();
-                if ($existing !== null) {
-                    if ($existing->name !== $name) {
-                        $existing->name = $name;
-                        $existing->save();
-                        $existing->refresh();
-                    }
-
-                    return $existing;
-                }
-            }
-
-            throw $e;
-        }
     }
 
     private function responseCacheTtlSeconds(): int
@@ -977,17 +734,4 @@ class SeriesController extends Controller
         ]);
     }
 
-    private function invalidateSeriesCaches(int $userId, Series $series): void
-    {
-        SeriesResponseCache::bumpUser($userId);
-        SeriesResponseCache::bumpSeries((int) $series->id);
-    }
-
-    private function touchSeriesForCache(Series $series): void
-    {
-        // If-Modified-Since is second-precision. Bump timestamp by 1s to avoid false 304 in same second.
-        $series->forceFill([
-            'updated_at' => now()->addSecond(),
-        ])->saveQuietly();
-    }
 }

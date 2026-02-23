@@ -2,20 +2,19 @@
 
 namespace App\Http\Controllers\Api;
 
+use App\Actions\SeriesPhoto\DestroySeriesPhotoAction;
+use App\Actions\SeriesPhoto\RebuildSeriesTagsAction;
+use App\Actions\SeriesPhoto\ReorderSeriesPhotosAction;
+use App\Actions\SeriesPhoto\StoreSeriesPhotosAction;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\ListSeriesPhotosRequest;
 use App\Http\Requests\StoreSeriesPhotosRequest;
 use App\Http\Requests\UpdateSeriesPhotoRequest;
-use App\Jobs\ModerateSeriesContent;
-use App\Jobs\SyncSeriesAutoTags;
 use App\Models\Photo;
 use App\Models\Series;
-use App\Services\PhotoAutoTagger;
-use App\Services\PhotoBatchUploader;
-use App\Support\SeriesResponseCache;
+use App\Services\Series\SeriesCacheService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Symfony\Component\HttpFoundation\StreamedResponse;
@@ -32,10 +31,12 @@ use Symfony\Component\HttpFoundation\StreamedResponse;
 class SeriesPhotoController extends Controller
 {
     public function __construct(
-        private PhotoBatchUploader $photoBatchUploader,
-        private PhotoAutoTagger $photoAutoTagger
-    ) {
-    }
+        private StoreSeriesPhotosAction $storeSeriesPhotosAction,
+        private ReorderSeriesPhotosAction $reorderSeriesPhotosAction,
+        private RebuildSeriesTagsAction $rebuildSeriesTagsAction,
+        private DestroySeriesPhotoAction $destroySeriesPhotoAction,
+        private SeriesCacheService $seriesCacheService
+    ) {}
 
     public function index(ListSeriesPhotosRequest $request, Series $series): JsonResponse
     {
@@ -62,28 +63,13 @@ class SeriesPhotoController extends Controller
     {
         $this->authorize('update', $series);
 
-        $disk = config('filesystems.default');
-        $files = $request->file('photos', []);
-        $uploadResult = $this->photoBatchUploader->uploadToSeries($series, $files, $disk);
-        $created = $uploadResult['created'];
-        $failed = $uploadResult['failed'];
+        $result = $this->storeSeriesPhotosAction->execute(
+            $series,
+            $request->file('photos', []),
+            (string) config('filesystems.default')
+        );
 
-        if (count($created) === 0) {
-            return response()->json([
-                'message' => 'No photos were saved.',
-                'photos_failed' => $failed,
-            ], 422);
-        }
-
-        SyncSeriesAutoTags::dispatch($series->id);
-        $this->queueModerationIfNeeded($series);
-        $this->invalidateSeriesCaches($series);
-
-        return response()->json([
-            'photos_created' => $created,
-            'photos_failed' => $failed,
-            'tags_sync' => 'queued',
-        ], 201);
+        return response()->json($result['payload'], $result['status']);
     }
 
     public function show(Series $series, Photo $photo): JsonResponse
@@ -122,59 +108,23 @@ class SeriesPhotoController extends Controller
             'photo_ids.*' => ['required', 'integer', 'distinct', 'exists:photos,id'],
         ]);
 
-        $photoIds = array_map('intval', $data['photo_ids']);
+        $result = $this->reorderSeriesPhotosAction->execute(
+            $series,
+            array_map('intval', $data['photo_ids'])
+        );
 
-        $seriesPhotoIds = $series->photos()
-            ->pluck('id')
-            ->map(fn ($id) => (int) $id)
-            ->all();
-
-        sort($photoIds);
-        $normalizedSeriesPhotoIds = $seriesPhotoIds;
-        sort($normalizedSeriesPhotoIds);
-
-        // Проверяем, что клиент прислал полный и корректный порядок фото серии.
-        if ($photoIds !== $normalizedSeriesPhotoIds) {
-            return response()->json([
-                'message' => 'photo_ids must contain all photos of the series exactly once.',
-            ], 422);
-        }
-
-        // Обновляем порядок атомарно, чтобы не оставить "половинчатое" состояние.
-        DB::transaction(function () use ($series, $data): void {
-            foreach ($data['photo_ids'] as $index => $photoId) {
-                $series->photos()
-                    ->whereKey($photoId)
-                    ->update([
-                        'sort_order' => $index + 1,
-                    ]);
-            }
-        });
-
-        $this->invalidateSeriesCaches($series);
-
-        return response()->json([
-            'data' => [
-                'photo_ids' => $data['photo_ids'],
-            ],
-        ]);
+        return response()->json($result['payload'], $result['status']);
     }
 
     public function retag(Series $series): JsonResponse
     {
         $this->authorize('update', $series);
 
-        ['processed' => $processed, 'failed' => $failed] = $this->rebuildSeriesTagsFromPhotos($series);
-        $this->invalidateSeriesCaches($series);
+        $result = $this->rebuildSeriesTagsAction->execute($series);
+        $this->seriesCacheService->invalidateForSeries($series);
 
         return response()->json([
-            'data' => [
-                'processed' => $processed,
-                'failed' => $failed,
-                'tags_count' => $series->tags()->count(),
-                'vision_enabled' => $this->photoAutoTagger->visionEnabled(),
-                'vision_healthy' => $this->photoAutoTagger->visionHealthy(),
-            ],
+            'data' => $result,
         ]);
     }
 
@@ -190,7 +140,7 @@ class SeriesPhotoController extends Controller
         }
 
         $photo->update($data);
-        $this->invalidateSeriesCaches($series);
+        $this->seriesCacheService->invalidateForSeries($series);
 
         return response()->json([
             'data' => $photo->fresh(),
@@ -202,16 +152,7 @@ class SeriesPhotoController extends Controller
         $this->ensureSeriesPhoto($series, $photo);
         $this->authorize('delete', $photo);
 
-        $disk = config('filesystems.default');
-        Storage::disk($disk)->delete($photo->path);
-
-        $photo->delete();
-        $this->touchSeriesForCache($series);
-        if (! $series->photos()->exists()) {
-            $series->tags()->detach();
-        }
-
-        $this->invalidateSeriesCaches($series);
+        $this->destroySeriesPhotoAction->execute($series, $photo, (string) config('filesystems.default'));
 
         return response()->json(status: 204);
     }
@@ -266,77 +207,6 @@ class SeriesPhotoController extends Controller
         $fromPath = strtolower(pathinfo((string) $photo->path, PATHINFO_EXTENSION));
 
         return $fromPath !== '' ? $fromPath : 'jpg';
-    }
-
-    /**
-     * @return array{processed:int, failed:int}
-     */
-    private function rebuildSeriesTagsFromPhotos(Series $series): array
-    {
-        $disk = config('filesystems.default');
-        $processed = 0;
-        $failed = 0;
-        $allTagNames = [];
-
-        $series->photos()
-            ->orderBy('id')
-            ->chunkById(100, function ($photos) use ($series, $disk, &$processed, &$failed, &$allTagNames): void {
-                foreach ($photos as $photo) {
-                    try {
-                        $allTagNames = [
-                            ...$allTagNames,
-                            ...$this->photoAutoTagger->detectTagsForPhoto($photo, $disk, $series),
-                        ];
-                        $processed++;
-                    } catch (\Throwable) {
-                        $failed++;
-                    }
-                }
-            });
-
-        $this->photoAutoTagger->syncSeriesTags($series, $allTagNames, true);
-
-        return [
-            'processed' => $processed,
-            'failed' => $failed,
-        ];
-    }
-
-    private function invalidateSeriesCaches(Series $series): void
-    {
-        SeriesResponseCache::bumpUser((int) $series->user_id);
-        SeriesResponseCache::bumpSeries((int) $series->id);
-    }
-
-    private function queueModerationIfNeeded(Series $series): void
-    {
-        $publicationStatus = (string) $series->publication_status;
-
-        if ($publicationStatus !== Series::PUBLICATION_PUBLISHED
-            && $publicationStatus !== Series::PUBLICATION_PENDING_MODERATION) {
-            return;
-        }
-
-        $series->forceFill([
-            'is_public' => false,
-            'publication_status' => Series::PUBLICATION_PENDING_MODERATION,
-            'moderation_status' => Series::MODERATION_PENDING,
-            'publication_requested_at' => now(),
-            'moderation_reason' => null,
-            'moderation_labels' => [],
-            'moderated_at' => null,
-            'moderated_by' => null,
-        ])->save();
-
-        ModerateSeriesContent::dispatch((int) $series->id);
-    }
-
-    private function touchSeriesForCache(Series $series): void
-    {
-        // If-Modified-Since is second-precision; bump timestamp to avoid false 304.
-        $series->forceFill([
-            'updated_at' => now()->addSecond(),
-        ])->saveQuietly();
     }
 
 }
