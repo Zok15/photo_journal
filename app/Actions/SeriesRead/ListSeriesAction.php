@@ -23,12 +23,14 @@ class ListSeriesAction
      */
     public function execute(Request $request, array $validated, int $userId): JsonResponse
     {
+        $statusOnly = (bool) ($validated['status_only'] ?? false);
+        $includeBlockingTags = (bool) ($validated['include_blocking_tags'] ?? false);
         $perPage = $validated['per_page'] ?? 15;
 
-        $query = Series::query()
-            ->where('user_id', $userId)
-            ->with('tags')
-            ->withCount('photos');
+        $query = Series::query()->where('user_id', $userId);
+        if (! $statusOnly) {
+            $query->with('tags')->withCount('photos');
+        }
 
         $calendarDatesQuery = Series::query()->where('user_id', $userId);
 
@@ -65,14 +67,17 @@ class ListSeriesAction
             }
         }
 
-        $calendarDates = $calendarDatesQuery
-            ->selectRaw('DATE(created_at) as date_key')
-            ->distinct()
-            ->orderBy('date_key')
-            ->pluck('date_key')
-            ->filter()
-            ->values()
-            ->all();
+        $calendarDates = [];
+        if (! $statusOnly) {
+            $calendarDates = $calendarDatesQuery
+                ->selectRaw('DATE(created_at) as date_key')
+                ->distinct()
+                ->orderBy('date_key')
+                ->pluck('date_key')
+                ->filter()
+                ->values()
+                ->all();
+        }
 
         $dateFrom = $validated['date_from'] ?? null;
         $dateTo = $validated['date_to'] ?? null;
@@ -91,17 +96,46 @@ class ListSeriesAction
 
         $paginator = $query->paginate($perPage)->withQueryString();
         $collection = $paginator->getCollection();
-        $previewMap = $this->seriesPreviewService->buildSeriesPreviewMap($collection);
+        if ($statusOnly) {
+            $paginator->setCollection($collection->map(
+                function (Series $series) use ($includeBlockingTags): array {
+                    $data = [
+                        'id' => (int) $series->id,
+                        'publication_status' => (string) $series->publication_status,
+                        'moderation_status' => (string) $series->moderation_status,
+                        'is_public' => (bool) $series->is_public,
+                    ];
+                    if ($includeBlockingTags) {
+                        $data['moderation_labels'] = array_values(array_filter(
+                            (array) ($series->moderation_labels ?? []),
+                            static fn ($value): bool => is_string($value) && trim($value) !== ''
+                        ));
+                    }
 
-        $paginator->setCollection($collection->map(function (Series $series) use ($previewMap): array {
-            $data = $series->toArray();
-            $data['preview_photos'] = $previewMap[(int) $series->id] ?? [];
+                    return $data;
+                }
+            ));
+        } else {
+            $previewMap = $this->seriesPreviewService->buildSeriesPreviewMap($collection);
+            $paginator->setCollection($collection->map(function (Series $series) use ($previewMap): array {
+                $data = $series->toArray();
+                $data['preview_photos'] = $previewMap[(int) $series->id] ?? [];
 
-            return $data;
-        }));
+                return $data;
+            }));
+        }
 
         $payload = $paginator->toArray();
-        $payload['calendar_dates'] = $calendarDates;
+        if (! $statusOnly) {
+            $payload['calendar_dates'] = $calendarDates;
+        }
+
+        if ($statusOnly) {
+            return response()
+                ->json($payload)
+                ->header('Cache-Control', 'private, no-store')
+                ->header('Vary', 'Authorization, Accept');
+        }
 
         $seriesTable = (new Series())->getTable();
         $lastModified = $this->seriesHttpCacheService->latestTimestamp(

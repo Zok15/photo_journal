@@ -273,6 +273,35 @@ class SeriesApiTest extends TestCase
         $this->assertStringContainsString('no-store', $cacheControl);
     }
 
+    public function test_index_status_only_returns_only_status_fields_and_optional_blocking_tags(): void
+    {
+        $series = Series::query()->create([
+            'user_id' => $this->user->id,
+            'title' => 'Status only',
+            'description' => 'Should not include heavy fields',
+            'is_public' => false,
+            'publication_status' => Series::PUBLICATION_PENDING_MODERATION,
+            'moderation_status' => Series::MODERATION_PENDING,
+            'moderation_labels' => ['nudity', 'closeup'],
+        ]);
+
+        $withoutTags = $this->getJson('/api/v1/series?status_only=1');
+        $withoutTags->assertOk();
+        $withoutTags->assertJsonPath('data.0.id', $series->id);
+        $withoutTags->assertJsonPath('data.0.publication_status', Series::PUBLICATION_PENDING_MODERATION);
+        $withoutTags->assertJsonPath('data.0.moderation_status', Series::MODERATION_PENDING);
+        $withoutTags->assertJsonMissingPath('data.0.preview_photos');
+        $withoutTags->assertJsonMissingPath('data.0.tags');
+        $withoutTags->assertJsonMissingPath('data.0.photos_count');
+        $withoutTags->assertJsonMissingPath('data.0.moderation_labels');
+
+        $withTags = $this->getJson('/api/v1/series?status_only=1&include_blocking_tags=1');
+        $withTags->assertOk();
+        $withTags->assertJsonPath('data.0.id', $series->id);
+        $withTags->assertJsonPath('data.0.moderation_labels.0', 'nudity');
+        $withTags->assertJsonPath('data.0.moderation_labels.1', 'closeup');
+    }
+
     public function test_index_uses_revalidation_cache_headers(): void
     {
         Series::query()->create([
@@ -318,6 +347,34 @@ class SeriesApiTest extends TestCase
 
         $second->assertStatus(304);
         $this->assertSame('', (string) $second->getContent());
+    }
+
+    public function test_show_status_only_returns_status_fields_and_optional_blocking_tags(): void
+    {
+        $series = Series::query()->create([
+            'user_id' => $this->user->id,
+            'title' => 'Show status only',
+            'description' => 'Status payload',
+            'is_public' => false,
+            'publication_status' => Series::PUBLICATION_REJECTED,
+            'moderation_status' => Series::MODERATION_REJECTED,
+            'moderation_labels' => ['femaleBreast'],
+        ]);
+
+        $withoutTags = $this->getJson("/api/v1/series/{$series->slug}?status_only=1");
+        $withoutTags->assertOk();
+        $withoutTags->assertJsonPath('data.id', $series->id);
+        $withoutTags->assertJsonPath('data.publication_status', Series::PUBLICATION_REJECTED);
+        $withoutTags->assertJsonPath('data.moderation_status', Series::MODERATION_REJECTED);
+        $withoutTags->assertJsonMissingPath('data.tags');
+        $withoutTags->assertJsonMissingPath('data.photos');
+        $withoutTags->assertJsonMissingPath('data.photos_count');
+        $withoutTags->assertJsonMissingPath('data.moderation_labels');
+
+        $withTags = $this->getJson("/api/v1/series/{$series->slug}?status_only=1&include_blocking_tags=1");
+        $withTags->assertOk();
+        $withTags->assertJsonPath('data.id', $series->id);
+        $withTags->assertJsonPath('data.moderation_labels.0', 'femaleBreast');
     }
 
     public function test_index_reflects_series_update_immediately(): void

@@ -58,7 +58,10 @@ class SeriesTable
                 Action::make('publishWithoutChecks')
                     ->label('Publish without checks')
                     ->requiresConfirmation()
-                    ->visible(fn (Series $record): bool => (string) $record->publication_status === Series::PUBLICATION_PENDING_MODERATION)
+                    ->visible(fn (Series $record): bool => in_array((string) $record->publication_status, [
+                        Series::PUBLICATION_PENDING_MODERATION,
+                        Series::PUBLICATION_REJECTED,
+                    ], true))
                     ->action(function (Series $record): void {
                         $record->forceFill([
                             'is_public' => true,

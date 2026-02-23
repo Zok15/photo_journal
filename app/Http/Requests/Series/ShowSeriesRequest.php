@@ -16,6 +16,8 @@ class ShowSeriesRequest extends FormRequest
         return [
             'include_photos' => ['nullable', 'boolean'],
             'photos_limit' => ['nullable', 'integer', 'min:1', 'max:100'],
+            'status_only' => ['nullable', 'boolean'],
+            'include_blocking_tags' => ['nullable', 'boolean'],
         ];
     }
 }

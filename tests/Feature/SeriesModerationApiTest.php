@@ -126,6 +126,45 @@ class SeriesModerationApiTest extends TestCase
         ]);
     }
 
+    public function test_admin_can_publish_rejected_series_without_additional_checks(): void
+    {
+        $admin = User::factory()->create();
+        Role::query()->firstOrCreate(['name' => 'moderator']);
+        $admin->assignRole('moderator');
+
+        $author = User::factory()->create();
+        $series = Series::query()->create([
+            'user_id' => $author->id,
+            'title' => 'Rejected publish',
+            'is_public' => false,
+            'publication_status' => Series::PUBLICATION_REJECTED,
+            'moderation_status' => Series::MODERATION_REJECTED,
+            'moderation_reason' => 'Detected risky labels',
+            'moderation_labels' => ['nudity'],
+        ]);
+
+        Sanctum::actingAs($admin);
+
+        $publish = $this->postJson("/api/v1/admin/series/{$series->slug}/publish", [
+            'reason' => 'Approved manually after review',
+        ]);
+
+        $publish->assertOk();
+        $publish->assertJsonPath('data.publication_status', Series::PUBLICATION_PUBLISHED);
+        $publish->assertJsonPath('data.moderation_status', Series::MODERATION_MANUAL_APPROVED);
+        $publish->assertJsonPath('data.is_public', true);
+        $publish->assertJsonPath('data.moderation_reason', 'Approved manually after review');
+
+        $this->assertDatabaseHas('series', [
+            'id' => $series->id,
+            'publication_status' => Series::PUBLICATION_PUBLISHED,
+            'moderation_status' => Series::MODERATION_MANUAL_APPROVED,
+            'is_public' => 1,
+            'moderated_by' => $admin->id,
+            'moderation_reason' => 'Approved manually after review',
+        ]);
+    }
+
     public function test_non_admin_cannot_use_admin_moderation_endpoints(): void
     {
         $user = User::factory()->create();

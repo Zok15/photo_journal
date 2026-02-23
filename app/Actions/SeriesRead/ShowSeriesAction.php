@@ -21,6 +21,30 @@ class ShowSeriesAction
      */
     public function execute(Request $request, Series $series, array $validated): JsonResponse
     {
+        $statusOnly = (bool) ($validated['status_only'] ?? false);
+        $includeBlockingTags = (bool) ($validated['include_blocking_tags'] ?? false);
+        if ($statusOnly) {
+            $data = [
+                'id' => (int) $series->id,
+                'publication_status' => (string) $series->publication_status,
+                'moderation_status' => (string) $series->moderation_status,
+                'is_public' => (bool) $series->is_public,
+            ];
+            if ($includeBlockingTags) {
+                $data['moderation_labels'] = array_values(array_filter(
+                    (array) ($series->moderation_labels ?? []),
+                    static fn ($value): bool => is_string($value) && trim($value) !== ''
+                ));
+            }
+
+            return response()
+                ->json([
+                    'data' => $data,
+                ])
+                ->header('Cache-Control', 'private, no-store')
+                ->header('Vary', 'Authorization, Accept');
+        }
+
         $includePhotos = $request->boolean('include_photos');
 
         if ($includePhotos) {

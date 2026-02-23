@@ -21,6 +21,8 @@ class ListSeriesRequest extends FormRequest
             'date_from' => ['nullable', 'date'],
             'date_to' => ['nullable', 'date'],
             'sort' => ['nullable', 'in:new,old'],
+            'status_only' => ['nullable', 'boolean'],
+            'include_blocking_tags' => ['nullable', 'boolean'],
         ];
     }
 }

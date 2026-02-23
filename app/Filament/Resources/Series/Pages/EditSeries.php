@@ -22,7 +22,10 @@ class EditSeries extends EditRecord
                 ->visible(function (): bool {
                     $record = $this->getRecord();
 
-                    return (string) $record->publication_status === Series::PUBLICATION_PENDING_MODERATION;
+                    return in_array((string) $record->publication_status, [
+                        Series::PUBLICATION_PENDING_MODERATION,
+                        Series::PUBLICATION_REJECTED,
+                    ], true);
                 })
                 ->action(function (): void {
                     /** @var Series $record */
