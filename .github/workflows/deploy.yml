@@ -156,7 +156,7 @@ jobs:
           User=${DEPLOY_USER}
           Group=${APP_GROUP}
           WorkingDirectory=${BACKEND_PATH}
-          ExecStart=/usr/bin/php artisan queue:work --sleep=1 --tries=3 --max-time=3600
+          ExecStart=/usr/bin/php artisan queue:work --queue=moderation,default --sleep=1 --tries=3 --max-time=3600
           ExecReload=/usr/bin/php artisan queue:restart
           Restart=always
           RestartSec=3
