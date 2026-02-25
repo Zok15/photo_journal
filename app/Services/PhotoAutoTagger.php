@@ -34,6 +34,7 @@ class PhotoAutoTagger
 
     private const STOPWORDS = [
         'img', 'image', 'photo', 'picture', 'snapshot', 'scan', 'camera',
+        'corporation',
         'copy', 'final', 'new', 'temp', 'test', 'edited', 'edit', 'small',
         'large', 'original', 'pxl', 'dsc', 'dscn', 'mvimg', 'picsart',
         'jpg', 'jpeg', 'png', 'webp', 'heic', 'raw',
@@ -612,13 +613,9 @@ class PhotoAutoTagger
 
         $tags = [];
 
-        foreach (['camera_make', 'camera_model'] as $field) {
-            $raw = trim((string) ($metadata->{$field} ?? ''));
-            if ($raw === '') {
-                continue;
-            }
-
-            $tags = [...$tags, ...$this->tokensFromText($raw)];
+        $cameraModel = trim((string) ($metadata->camera_model ?? ''));
+        if ($cameraModel !== '') {
+            $tags = [...$tags, ...$this->tokensFromText($cameraModel)];
         }
 
         $iso = (int) ($metadata->iso ?? 0);
