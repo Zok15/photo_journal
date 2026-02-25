@@ -28,7 +28,8 @@ class RebuildSeriesTagsAction
                     try {
                         $allTagNames = [
                             ...$allTagNames,
-                            ...$this->photoAutoTagger->detectTagsForPhoto($photo, $disk, $series),
+                            // Manual "retag" must always try vision, even when local tags are already enough.
+                            ...$this->photoAutoTagger->detectTagsForPhoto($photo, $disk, $series, forceVision: true),
                         ];
                         $processed++;
                     } catch (\Throwable) {

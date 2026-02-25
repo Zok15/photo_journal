@@ -339,6 +339,40 @@ class SeriesPhotoUploadTest extends TestCase
         $this->assertNotContains('novyiTegProverka', $names);
     }
 
+    public function test_retag_forces_vision_even_when_local_tags_already_reach_skip_threshold(): void
+    {
+        config()->set('filesystems.default', 'local');
+        config()->set('vision.enabled', false);
+        config()->set('vision.skip_if_tags_count_at_least', 1);
+        Storage::fake('local');
+
+        $series = Series::query()->create([
+            'user_id' => $this->user->id,
+            'title' => 'Retag vision force',
+            'description' => 'Vision should still run',
+        ]);
+
+        $upload = $this->post("/api/v1/series/{$series->id}/photos", [
+            'photos' => [$this->fakeImage('meta-rich.jpg')],
+        ]);
+        $upload->assertCreated();
+
+        $series->tags()->detach();
+
+        config()->set('vision.enabled', true);
+        $vision = \Mockery::mock(VisionTaggerClient::class);
+        $vision->shouldReceive('isEnabled')->andReturn(true);
+        $vision->shouldReceive('isHealthy')->andReturn(true);
+        $vision->shouldReceive('detectTags')->once()->andReturn(['snowdrop']);
+        $this->app->instance(VisionTaggerClient::class, $vision);
+
+        $response = $this->postJson("/api/v1/series/{$series->id}/photos/retag");
+        $response->assertOk();
+
+        $names = $series->fresh()->load('tags')->tags->pluck('name')->all();
+        $this->assertContains('snowdrop', $names);
+    }
+
     public function test_upload_and_retag_work_with_slug_route_key(): void
     {
         config()->set('filesystems.default', 'local');

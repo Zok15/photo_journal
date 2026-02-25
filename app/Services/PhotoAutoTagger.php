@@ -129,9 +129,14 @@ class PhotoAutoTagger
     /**
      * @return array<int, string>
      */
-    public function detectTagsForPhoto(Photo $photo, string $disk, ?Series $series = null): array
+    public function detectTagsForPhoto(
+        Photo $photo,
+        string $disk,
+        ?Series $series = null,
+        bool $forceVision = false
+    ): array
     {
-        return collect($this->buildTagNames($photo, $disk, $series, false, false))
+        return collect($this->buildTagNames($photo, $disk, $series, $forceVision, false))
             ->filter(fn ($value): bool => is_string($value) && $value !== '')
             ->filter(fn (string $value): bool => !$this->isModerationOnlyTag($value))
             ->values()
