@@ -701,6 +701,42 @@ class SeriesApiTest extends TestCase
         $response->assertJsonPath('data.0.id', $inside->id);
     }
 
+    public function test_index_filters_by_taken_date_range_when_requested(): void
+    {
+        $first = Series::query()->create([
+            'user_id' => $this->user->id,
+            'title' => 'Taken inside',
+            'description' => null,
+        ]);
+        $second = Series::query()->create([
+            'user_id' => $this->user->id,
+            'title' => 'Taken outside',
+            'description' => null,
+        ]);
+
+        $firstPhoto = $first->photos()->create([
+            'path' => 'photos/series/'.$first->id.'/inside.jpg',
+            'original_name' => 'inside.jpg',
+        ]);
+        $firstPhoto->metadata()->create([
+            'taken_at' => '2026-02-14 11:00:00',
+        ]);
+
+        $secondPhoto = $second->photos()->create([
+            'path' => 'photos/series/'.$second->id.'/outside.jpg',
+            'original_name' => 'outside.jpg',
+        ]);
+        $secondPhoto->metadata()->create([
+            'taken_at' => '2026-01-20 11:00:00',
+        ]);
+
+        $response = $this->getJson('/api/v1/series?date_field=taken&date_from=2026-02-10&date_to=2026-02-20');
+        $response->assertOk();
+
+        $ids = collect($response->json('data'))->pluck('id')->all();
+        $this->assertSame([$first->id], $ids);
+    }
+
     public function test_index_returns_full_calendar_dates_even_when_date_filter_is_applied(): void
     {
         $first = Series::query()->create([
@@ -729,6 +765,44 @@ class SeriesApiTest extends TestCase
 
         $calendarDates = collect($response->json('calendar_dates'));
         $this->assertTrue($calendarDates->contains('2026-02-10'));
+        $this->assertTrue($calendarDates->contains('2026-02-16'));
+    }
+
+    public function test_index_returns_taken_calendar_dates_when_taken_date_field_is_selected(): void
+    {
+        $first = Series::query()->create([
+            'user_id' => $this->user->id,
+            'title' => 'Taken calendar first',
+            'description' => null,
+        ]);
+        $second = Series::query()->create([
+            'user_id' => $this->user->id,
+            'title' => 'Taken calendar second',
+            'description' => null,
+        ]);
+
+        $firstPhoto = $first->photos()->create([
+            'path' => 'photos/series/'.$first->id.'/first.jpg',
+            'original_name' => 'first.jpg',
+        ]);
+        $firstPhoto->metadata()->create([
+            'taken_at' => '2026-01-05 10:00:00',
+        ]);
+
+        $secondPhoto = $second->photos()->create([
+            'path' => 'photos/series/'.$second->id.'/second.jpg',
+            'original_name' => 'second.jpg',
+        ]);
+        $secondPhoto->metadata()->create([
+            'taken_at' => '2026-02-16 12:30:00',
+        ]);
+
+        $response = $this->getJson('/api/v1/series?date_field=taken&date_from=2026-02-16&date_to=2026-02-16&per_page=1');
+        $response->assertOk();
+        $response->assertJsonPath('total', 1);
+
+        $calendarDates = collect($response->json('calendar_dates'));
+        $this->assertTrue($calendarDates->contains('2026-01-05'));
         $this->assertTrue($calendarDates->contains('2026-02-16'));
     }
 

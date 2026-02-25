@@ -27,6 +27,7 @@ class ListSeriesAction
         $includeBlockingTags = (bool) ($validated['include_blocking_tags'] ?? false);
         $perPage = $validated['per_page'] ?? 15;
         $sort = (string) ($validated['sort'] ?? 'new');
+        $dateField = (string) ($validated['date_field'] ?? 'added');
         $seriesTable = (new Series())->getTable();
 
         $query = Series::query()->where('user_id', $userId);
@@ -71,23 +72,56 @@ class ListSeriesAction
 
         $calendarDates = [];
         if (! $statusOnly) {
-            $calendarDates = $calendarDatesQuery
-                ->selectRaw('DATE(created_at) as date_key')
-                ->distinct()
-                ->orderBy('date_key')
-                ->pluck('date_key')
-                ->filter()
-                ->values()
-                ->all();
+            if ($dateField === 'taken') {
+                $calendarDates = $calendarDatesQuery
+                    ->join('photos', 'photos.series_id', '=', $seriesTable.'.id')
+                    ->join('photo_metadata', 'photo_metadata.photo_id', '=', 'photos.id')
+                    ->whereNotNull('photo_metadata.taken_at')
+                    ->selectRaw('DATE(photo_metadata.taken_at) as date_key')
+                    ->distinct()
+                    ->orderBy('date_key')
+                    ->pluck('date_key')
+                    ->filter()
+                    ->values()
+                    ->all();
+            } else {
+                $calendarDates = $calendarDatesQuery
+                    ->selectRaw('DATE('.$seriesTable.'.created_at) as date_key')
+                    ->distinct()
+                    ->orderBy('date_key')
+                    ->pluck('date_key')
+                    ->filter()
+                    ->values()
+                    ->all();
+            }
         }
 
         $dateFrom = $validated['date_from'] ?? null;
         $dateTo = $validated['date_to'] ?? null;
-        if ($dateFrom !== null) {
-            $query->whereDate('created_at', '>=', $dateFrom);
-        }
-        if ($dateTo !== null) {
-            $query->whereDate('created_at', '<=', $dateTo);
+        if ($dateField === 'taken') {
+            if ($dateFrom !== null || $dateTo !== null) {
+                $query->whereExists(function ($builder) use ($dateFrom, $dateTo, $seriesTable): void {
+                    $builder->selectRaw('1')
+                        ->from('photos')
+                        ->join('photo_metadata', 'photo_metadata.photo_id', '=', 'photos.id')
+                        ->whereColumn('photos.series_id', $seriesTable.'.id')
+                        ->whereNotNull('photo_metadata.taken_at');
+
+                    if ($dateFrom !== null) {
+                        $builder->whereDate('photo_metadata.taken_at', '>=', $dateFrom);
+                    }
+                    if ($dateTo !== null) {
+                        $builder->whereDate('photo_metadata.taken_at', '<=', $dateTo);
+                    }
+                });
+            }
+        } else {
+            if ($dateFrom !== null) {
+                $query->whereDate($seriesTable.'.created_at', '>=', $dateFrom);
+            }
+            if ($dateTo !== null) {
+                $query->whereDate($seriesTable.'.created_at', '<=', $dateTo);
+            }
         }
 
         if (in_array($sort, ['taken_new', 'taken_old'], true)) {

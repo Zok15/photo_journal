@@ -21,6 +21,7 @@ class ListPublicSeriesRequest extends FormRequest
             'author_id' => ['nullable', 'integer', 'exists:users,id'],
             'date_from' => ['nullable', 'date'],
             'date_to' => ['nullable', 'date'],
+            'date_field' => ['nullable', 'in:added,taken'],
             'sort' => ['nullable', 'in:new,old,taken_new,taken_old'],
         ];
     }

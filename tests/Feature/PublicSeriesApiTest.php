@@ -123,6 +123,44 @@ class PublicSeriesApiTest extends TestCase
         $this->assertSame([$firstTaken->id, $secondTaken->id], array_slice($ids, 0, 2));
     }
 
+    public function test_public_index_filters_by_taken_date_range_when_requested(): void
+    {
+        $author = User::factory()->create(['name' => 'Alice']);
+
+        $inside = Series::query()->create([
+            'user_id' => $author->id,
+            'title' => 'Public taken inside',
+            'is_public' => true,
+        ]);
+        $outside = Series::query()->create([
+            'user_id' => $author->id,
+            'title' => 'Public taken outside',
+            'is_public' => true,
+        ]);
+
+        $insidePhoto = $inside->photos()->create([
+            'path' => 'photos/public/'.$inside->id.'/inside.jpg',
+            'original_name' => 'inside.jpg',
+        ]);
+        $insidePhoto->metadata()->create([
+            'taken_at' => '2026-02-21 17:18:10',
+        ]);
+
+        $outsidePhoto = $outside->photos()->create([
+            'path' => 'photos/public/'.$outside->id.'/outside.jpg',
+            'original_name' => 'outside.jpg',
+        ]);
+        $outsidePhoto->metadata()->create([
+            'taken_at' => '2026-01-02 09:00:00',
+        ]);
+
+        $response = $this->getJson('/api/v1/public/series?date_field=taken&date_from=2026-02-20&date_to=2026-02-22');
+        $response->assertOk();
+
+        $ids = collect($response->json('data'))->pluck('id')->all();
+        $this->assertSame([$inside->id], $ids);
+    }
+
     public function test_public_show_returns_public_series_with_photos_for_guest(): void
     {
         $author = User::factory()->create(['name' => 'Alice']);
