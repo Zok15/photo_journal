@@ -125,7 +125,7 @@ class SeriesPhotoUploadTest extends TestCase
         ]);
     }
 
-    public function test_upload_assigns_exif_camera_and_range_tags_from_metadata(): void
+    public function test_upload_assigns_exif_camera_and_word_based_tags_from_metadata(): void
     {
         config()->set('filesystems.default', 'local');
         Storage::fake('local');
@@ -158,9 +158,12 @@ class SeriesPhotoUploadTest extends TestCase
         $tagNames = $series->fresh()->load('tags')->tags->pluck('name')->all();
 
         $this->assertContains('a7iii', $tagNames);
-        $this->assertContains('iso1200', $tagNames);
-        $this->assertContains('focal90mm', $tagNames);
-        $this->assertContains('shutter1over320', $tagNames);
+        $this->assertContains('isoHigh', $tagNames);
+        $this->assertContains('focalPortrait', $tagNames);
+        $this->assertContains('shutterFast', $tagNames);
+        $this->assertNotContains('iso1200', $tagNames);
+        $this->assertNotContains('focal90mm', $tagNames);
+        $this->assertNotContains('shutter1over320', $tagNames);
     }
 
     public function test_upload_filters_corporation_token_from_camera_make(): void

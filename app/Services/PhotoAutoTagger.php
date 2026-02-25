@@ -638,44 +638,61 @@ class PhotoAutoTagger
 
     private function isoStepTag(int $iso): string
     {
-        $step = (int) round($iso / 200) * 200;
-        if ($step < 100) {
-            $step = 100;
+        if ($iso <= 200) {
+            return 'isoLow';
         }
 
-        return "iso{$step}";
+        if ($iso <= 800) {
+            return 'isoMedium';
+        }
+
+        if ($iso <= 1600) {
+            return 'isoHigh';
+        }
+
+        return 'isoVeryHigh';
     }
 
     private function focalRoundedTag(float $focalLengthMm): string
     {
-        $rounded = (int) round($focalLengthMm / 10) * 10;
-        if ($rounded < 10) {
-            $rounded = 10;
+        if ($focalLengthMm < 35) {
+            return 'focalWide';
         }
 
-        return "focal{$rounded}mm";
+        if ($focalLengthMm < 70) {
+            return 'focalStandard';
+        }
+
+        if ($focalLengthMm < 135) {
+            return 'focalPortrait';
+        }
+
+        if ($focalLengthMm < 300) {
+            return 'focalTelephoto';
+        }
+
+        return 'focalSuperTelephoto';
     }
 
     private function exposureTag(float $seconds): string
     {
-        if ($seconds < 1) {
-            $standardDenominators = [8000, 4000, 2000, 1000, 500, 320, 250, 200, 160, 125, 100, 80, 60, 50, 40, 30, 25, 20, 15, 13, 10, 8, 6, 5, 4, 3, 2];
-            $best = $standardDenominators[0];
-            $bestDiff = abs($seconds - (1 / $best));
-
-            foreach ($standardDenominators as $denominator) {
-                $diff = abs($seconds - (1 / $denominator));
-                if ($diff < $bestDiff) {
-                    $best = $denominator;
-                    $bestDiff = $diff;
-                }
-            }
-
-            return "shutter1over{$best}";
+        if ($seconds <= (1 / 500)) {
+            return 'shutterVeryFast';
         }
 
-        $roundedSeconds = (int) max(1, round($seconds));
-        return "shutter{$roundedSeconds}s";
+        if ($seconds <= (1 / 125)) {
+            return 'shutterFast';
+        }
+
+        if ($seconds <= (1 / 30)) {
+            return 'shutterHandheld';
+        }
+
+        if ($seconds < 1) {
+            return 'shutterSlow';
+        }
+
+        return 'shutterLongExposure';
     }
 
     private function parseExposureSeconds(string $raw): ?float
