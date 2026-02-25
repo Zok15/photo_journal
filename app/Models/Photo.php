@@ -12,4 +12,9 @@ class Photo extends Model
     {
         return $this->belongsTo(Series::class);
     }
+
+    public function metadata()
+    {
+        return $this->hasOne(PhotoMetadata::class);
+    }
 }

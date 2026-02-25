@@ -2,6 +2,7 @@
 
 namespace App\Filament\Resources\Photos\Schemas;
 
+use Filament\Forms\Components\DateTimePicker;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\TextInput;
 use Filament\Schemas\Schema;
@@ -33,6 +34,19 @@ class PhotoForm
                 TextInput::make('size')
                     ->numeric()
                     ->minValue(0),
+                TextInput::make('sort_order')
+                    ->numeric()
+                    ->minValue(0),
+                DateTimePicker::make('created_at')
+                    ->seconds(false)
+                    ->native(false)
+                    ->disabled()
+                    ->dehydrated(false),
+                DateTimePicker::make('updated_at')
+                    ->seconds(false)
+                    ->native(false)
+                    ->disabled()
+                    ->dehydrated(false),
             ]);
     }
 }

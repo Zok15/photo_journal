@@ -7,6 +7,7 @@ use App\Jobs\SyncSeriesAutoTags;
 use App\Models\Series;
 use App\Models\Tag;
 use App\Models\User;
+use App\Services\ExifMetadataExtractor;
 use App\Services\VisionTaggerClient;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
@@ -75,6 +76,53 @@ class SeriesPhotoUploadTest extends TestCase
 
         Queue::assertPushed(ProcessSeries::class, 1);
         Queue::assertPushed(SyncSeriesAutoTags::class, 1);
+    }
+
+    public function test_upload_persists_exif_metadata_when_available(): void
+    {
+        Queue::fake();
+        config()->set('filesystems.default', 'local');
+        Storage::fake('local');
+
+        $series = Series::query()->create([
+            'user_id' => $this->user->id,
+            'title' => 'Exif series',
+            'description' => 'Metadata check',
+        ]);
+
+        $extractor = \Mockery::mock(ExifMetadataExtractor::class);
+        $extractor->shouldReceive('extractFromUploadedFile')
+            ->once()
+            ->andReturn([
+                'taken_at' => '2026-02-25 11:30:00',
+                'camera_make' => 'Canon',
+                'camera_model' => 'EOS R6',
+                'iso' => 400,
+                'exposure_time' => '1/125',
+                'aperture' => 2.8,
+                'focal_length_mm' => 35.0,
+                'width' => 1920,
+                'height' => 1080,
+                'raw_exif_json' => ['EXIF' => ['DateTimeOriginal' => '2026:02:25 11:30:00']],
+            ]);
+        $this->app->instance(ExifMetadataExtractor::class, $extractor);
+
+        $response = $this->post("/api/v1/series/{$series->id}/photos", [
+            'photos' => [$this->fakeImage('meta.jpg')],
+        ]);
+
+        $response->assertCreated();
+        $photoId = (int) $response->json('photos_created.0.id');
+
+        $this->assertDatabaseHas('photo_metadata', [
+            'photo_id' => $photoId,
+            'camera_make' => 'Canon',
+            'camera_model' => 'EOS R6',
+            'iso' => 400,
+            'exposure_time' => '1/125',
+            'width' => 1920,
+            'height' => 1080,
+        ]);
     }
 
     public function test_upload_assigns_auto_tags_from_file_name(): void

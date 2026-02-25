@@ -2,8 +2,10 @@
 
 namespace App\Services;
 
+use App\Models\Photo;
 use App\Models\Series;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use RuntimeException;
 use Throwable;
@@ -13,6 +15,10 @@ use Throwable;
  */
 class PhotoBatchUploader
 {
+    public function __construct(private ExifMetadataExtractor $exifMetadataExtractor)
+    {
+    }
+
     /**
      * @param array<int, UploadedFile> $files
      * @return array{created: array<int, mixed>, failed: array<int, array{original_name: string, error_code: string, message: string}>}
@@ -27,8 +33,12 @@ class PhotoBatchUploader
         /** @var UploadedFile $file */
         foreach ($files as $file) {
             $path = null;
+            $preparedMetadata = null;
 
             try {
+                // Extract EXIF before writing the file to storage.
+                $preparedMetadata = $this->exifMetadataExtractor->extractFromUploadedFile($file);
+
                 $path = $this->storeOrFail($file, $directory, $disk);
                 $storedPaths[] = $path;
 
@@ -39,6 +49,7 @@ class PhotoBatchUploader
                     'mime' => $file->getClientMimeType(),
                 ]);
 
+                $this->storePreparedMetadata($photo, $file, $preparedMetadata);
                 $created[] = $photo;
             } catch (Throwable $e) {
                 // Если ошибка произошла после записи файла, удаляем "сироту" из storage.
@@ -67,6 +78,31 @@ class PhotoBatchUploader
             'created' => $created,
             'failed' => $failed,
         ];
+    }
+
+    /**
+     * @param array<string, mixed>|null $metadata
+     */
+    private function storePreparedMetadata(Photo $photo, UploadedFile $file, ?array $metadata): void
+    {
+        try {
+            if ($metadata === null) {
+                return;
+            }
+
+            $size = $file->getSize();
+            if ($size !== false && is_numeric($size)) {
+                $metadata['source_file_size'] = max(0, (int) $size);
+            }
+
+            $photo->metadata()->updateOrCreate([], $metadata);
+        } catch (Throwable $e) {
+            Log::warning('Failed to extract EXIF metadata for uploaded photo.', [
+                'photo_id' => (int) $photo->id,
+                'original_name' => $file->getClientOriginalName(),
+                'error' => $e->getMessage(),
+            ]);
+        }
     }
 
     private function storeOrFail(UploadedFile $file, string $directoryPath, string $disk): string

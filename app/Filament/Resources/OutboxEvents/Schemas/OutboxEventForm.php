@@ -38,6 +38,17 @@ class OutboxEventForm
                 Textarea::make('last_error')
                     ->rows(3)
                     ->columnSpanFull(),
+                DateTimePicker::make('created_at')
+                    ->seconds(false)
+                    ->native(false)
+                    ->disabled()
+                    ->dehydrated(false),
+                DateTimePicker::make('updated_at')
+                    ->seconds(false)
+                    ->native(false)
+                    ->disabled()
+                    ->dehydrated(false)
+                    ->columnSpanFull(),
             ]);
     }
 }

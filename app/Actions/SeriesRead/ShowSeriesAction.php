@@ -53,6 +53,7 @@ class ShowSeriesAction
 
             $series->load([
                 'photos' => fn ($query) => $query
+                    ->with('metadata')
                     ->orderByRaw('sort_order IS NULL')
                     ->orderBy('sort_order')
                     ->latest()

@@ -24,6 +24,10 @@ class SeriesTable
                 TextColumn::make('title')
                     ->searchable()
                     ->sortable(),
+                TextColumn::make('slug')
+                    ->searchable()
+                    ->sortable()
+                    ->toggleable(),
                 TextColumn::make('user.name')
                     ->label('Author')
                     ->searchable()
@@ -37,13 +41,39 @@ class SeriesTable
                     ->boolean(),
                 TextColumn::make('publication_status')
                     ->label('Publication')
-                    ->badge(),
+                    ->badge()
+                    ->sortable(),
                 TextColumn::make('moderation_status')
                     ->label('Moderation')
-                    ->badge(),
+                    ->badge()
+                    ->sortable(),
+                TextColumn::make('moderation_reason')
+                    ->limit(80)
+                    ->toggleable(isToggledHiddenByDefault: true),
+                TextColumn::make('moderation_labels')
+                    ->badge()
+                    ->separator(',')
+                    ->toggleable(isToggledHiddenByDefault: true),
+                TextColumn::make('publication_requested_at')
+                    ->dateTime()
+                    ->sortable()
+                    ->toggleable(isToggledHiddenByDefault: true),
+                TextColumn::make('moderated_at')
+                    ->dateTime()
+                    ->sortable()
+                    ->toggleable(isToggledHiddenByDefault: true),
+                TextColumn::make('moderator.name')
+                    ->label('Moderated by')
+                    ->searchable()
+                    ->sortable()
+                    ->toggleable(isToggledHiddenByDefault: true),
                 TextColumn::make('created_at')
                     ->dateTime()
                     ->sortable(),
+                TextColumn::make('updated_at')
+                    ->dateTime()
+                    ->sortable()
+                    ->toggleable(isToggledHiddenByDefault: true),
             ])
             ->filters([
                 SelectFilter::make('publication_status')

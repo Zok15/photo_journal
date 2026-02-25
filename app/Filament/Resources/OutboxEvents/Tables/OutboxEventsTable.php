@@ -33,6 +33,12 @@ class OutboxEventsTable
                 TextColumn::make('attempts')
                     ->numeric()
                     ->sortable(),
+                TextColumn::make('payload')
+                    ->formatStateUsing(static fn ($state): string => is_array($state)
+                        ? json_encode($state, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?: '{}'
+                        : (string) $state)
+                    ->limit(120)
+                    ->toggleable(isToggledHiddenByDefault: true),
                 TextColumn::make('last_error')
                     ->limit(60)
                     ->toggleable(isToggledHiddenByDefault: true),
@@ -45,6 +51,10 @@ class OutboxEventsTable
                 TextColumn::make('created_at')
                     ->dateTime()
                     ->sortable(),
+                TextColumn::make('updated_at')
+                    ->dateTime()
+                    ->sortable()
+                    ->toggleable(isToggledHiddenByDefault: true),
             ])
             ->filters([
                 SelectFilter::make('status')

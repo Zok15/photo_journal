@@ -38,9 +38,30 @@ class PhotosTable
                 TextColumn::make('size')
                     ->numeric()
                     ->sortable(),
+                TextColumn::make('sort_order')
+                    ->numeric()
+                    ->sortable(),
+                TextColumn::make('metadata.taken_at')
+                    ->label('Taken at')
+                    ->dateTime()
+                    ->sortable()
+                    ->toggleable(isToggledHiddenByDefault: true),
+                TextColumn::make('metadata.camera_model')
+                    ->label('Camera')
+                    ->searchable()
+                    ->toggleable(isToggledHiddenByDefault: true),
+                TextColumn::make('metadata.iso')
+                    ->label('ISO')
+                    ->numeric()
+                    ->sortable()
+                    ->toggleable(isToggledHiddenByDefault: true),
                 TextColumn::make('created_at')
                     ->dateTime()
                     ->sortable(),
+                TextColumn::make('updated_at')
+                    ->dateTime()
+                    ->sortable()
+                    ->toggleable(isToggledHiddenByDefault: true),
             ])
             ->filters([
                 //

@@ -2,6 +2,7 @@
 
 namespace App\Filament\Resources\Tags\Schemas;
 
+use Filament\Forms\Components\DateTimePicker;
 use Filament\Forms\Components\TextInput;
 use Filament\Schemas\Schema;
 
@@ -16,6 +17,16 @@ class TagForm
                     ->maxLength(50)
                     ->rule('regex:/^[A-Za-z ]+$/')
                     ->helperText('Latin letters and spaces only.'),
+                DateTimePicker::make('created_at')
+                    ->seconds(false)
+                    ->native(false)
+                    ->disabled()
+                    ->dehydrated(false),
+                DateTimePicker::make('updated_at')
+                    ->seconds(false)
+                    ->native(false)
+                    ->disabled()
+                    ->dehydrated(false),
             ]);
     }
 }

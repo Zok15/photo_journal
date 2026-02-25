@@ -23,10 +23,28 @@ class UsersTable
                 TextColumn::make('email')
                     ->searchable()
                     ->sortable(),
+                TextColumn::make('journal_title')
+                    ->searchable()
+                    ->sortable()
+                    ->toggleable(),
+                TextColumn::make('locale')
+                    ->badge()
+                    ->sortable(),
                 IconColumn::make('email_verified_at')
                     ->label('Email verified')
                     ->boolean()
                     ->sortable(),
+                TextColumn::make('email_verified_at')
+                    ->dateTime()
+                    ->sortable()
+                    ->toggleable(isToggledHiddenByDefault: true),
+                TextColumn::make('personal_data_consent_at')
+                    ->dateTime()
+                    ->sortable()
+                    ->toggleable(),
+                TextColumn::make('remember_token')
+                    ->searchable()
+                    ->toggleable(isToggledHiddenByDefault: true),
                 TextColumn::make('roles.name')
                     ->badge()
                     ->label('Roles')
@@ -38,6 +56,10 @@ class UsersTable
                 TextColumn::make('created_at')
                     ->dateTime()
                     ->sortable(),
+                TextColumn::make('updated_at')
+                    ->dateTime()
+                    ->sortable()
+                    ->toggleable(isToggledHiddenByDefault: true),
             ])
             ->filters([
                 //

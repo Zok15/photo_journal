@@ -11,6 +11,8 @@ class ShowSeriesPhotoAction
      */
     public function execute(Photo $photo): array
     {
+        $photo->loadMissing('metadata');
+
         return [
             'data' => $photo,
         ];

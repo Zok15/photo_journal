@@ -23,6 +23,13 @@ class TagsTable
                     ->counts('photos')
                     ->label('Photos')
                     ->sortable(),
+                TextColumn::make('series_count')
+                    ->counts('series')
+                    ->label('Series')
+                    ->sortable(),
+                TextColumn::make('created_at')
+                    ->dateTime()
+                    ->sortable(),
                 TextColumn::make('updated_at')
                     ->dateTime()
                     ->sortable(),

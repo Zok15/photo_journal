@@ -22,6 +22,14 @@ class UserForm
                     ->required()
                     ->maxLength(255)
                     ->unique(ignoreRecord: true),
+                TextInput::make('journal_title')
+                    ->maxLength(255),
+                Select::make('locale')
+                    ->options([
+                        'ru' => 'ru',
+                        'en' => 'en',
+                    ])
+                    ->required(),
                 Toggle::make('email_verified')
                     ->label('Email verified')
                     ->dehydrated(false)
@@ -45,17 +53,35 @@ class UserForm
                     ->native(false)
                     ->nullable()
                     ->dehydrateStateUsing(static fn ($state) => blank($state) ? null : $state),
+                DateTimePicker::make('personal_data_consent_at')
+                    ->label('Personal data consent at')
+                    ->seconds(false)
+                    ->native(false)
+                    ->nullable()
+                    ->dehydrateStateUsing(static fn ($state) => blank($state) ? null : $state),
                 TextInput::make('password')
                     ->password()
                     ->required(fn (string $operation): bool => $operation === 'create')
                     ->minLength(8)
                     ->maxLength(255)
                     ->dehydrated(fn (?string $state): bool => filled($state)),
+                TextInput::make('remember_token')
+                    ->maxLength(100),
                 Select::make('roles')
                     ->relationship('roles', 'name')
                     ->multiple()
                     ->preload()
                     ->searchable(),
+                DateTimePicker::make('created_at')
+                    ->seconds(false)
+                    ->native(false)
+                    ->disabled()
+                    ->dehydrated(false),
+                DateTimePicker::make('updated_at')
+                    ->seconds(false)
+                    ->native(false)
+                    ->disabled()
+                    ->dehydrated(false),
             ]);
     }
 }

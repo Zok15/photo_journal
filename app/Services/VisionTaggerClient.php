@@ -25,7 +25,8 @@ class VisionTaggerClient
             $base = (string) config('vision.url');
             // Для URL .../tag автоматически проверяем .../health.
             $healthUrl = preg_replace('#/tag$#', '/health', $base) ?: $base;
-            $response = Http::timeout(2)->acceptJson()->get($healthUrl);
+            $timeout = max(3, min(15, (int) config('vision.timeout_seconds', 10)));
+            $response = Http::timeout($timeout)->acceptJson()->get($healthUrl);
 
             return $response->ok() && ($response->json('ok') === true);
         } catch (\Throwable) {

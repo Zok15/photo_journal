@@ -17,6 +17,7 @@ class ListSeriesPhotosAction
         $sortDir = $validated['sort_dir'] ?? 'desc';
 
         return $series->photos()
+            ->with('metadata')
             ->orderBy($sortBy, $sortDir)
             ->when($sortBy !== 'id', function ($query) use ($sortDir): void {
                 $query->orderBy('id', $sortDir);
