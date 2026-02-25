@@ -44,6 +44,14 @@ return [
         static fn (string $value): string => trim($value),
         explode(',', (string) env('MODERATION_CONTEXTUAL_RISK_REQUIRES_DIRECT_SUPPORT_TAGS', 'nsfw,pornography'))
     ))),
+    'contextual_risk_requires_harm_support_tags' => array_values(array_filter(array_map(
+        static fn (string $value): string => trim($value),
+        explode(',', (string) env('MODERATION_CONTEXTUAL_RISK_REQUIRES_HARM_SUPPORT_TAGS', 'gore,selfHarm,violence'))
+    ))),
+    'contextual_risk_harm_support_tags' => array_values(array_filter(array_map(
+        static fn (string $value): string => trim($value),
+        explode(',', (string) env('MODERATION_CONTEXTUAL_RISK_HARM_SUPPORT_TAGS', 'blood,injury,wound,corpse,deadBody,graphicViolence'))
+    ))),
     'contextual_risk_always_human_tags' => array_values(array_filter(array_map(
         static fn (string $value): string => trim($value),
         explode(',', (string) env('MODERATION_CONTEXTUAL_RISK_ALWAYS_HUMAN_TAGS', 'gore'))

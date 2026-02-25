@@ -509,6 +509,74 @@ class SeriesModerationApiTest extends TestCase
         $this->assertSame([], (array) $series->moderation_labels);
     }
 
+    public function test_moderation_does_not_reject_gore_without_harm_support_in_human_scene(): void
+    {
+        $author = User::factory()->create();
+        $series = Series::query()->create([
+            'user_id' => $author->id,
+            'title' => 'Fire show',
+            'is_public' => false,
+            'publication_status' => Series::PUBLICATION_PENDING_MODERATION,
+            'moderation_status' => Series::MODERATION_PENDING,
+        ]);
+
+        Photo::query()->create([
+            'series_id' => $series->id,
+            'path' => 'photos/series/fire-show.jpg',
+            'original_name' => 'fire-show.jpg',
+            'size' => 1000,
+            'mime' => 'image/jpeg',
+        ]);
+
+        $mock = \Mockery::mock(PhotoAutoTagger::class);
+        $mock->shouldReceive('detectTagsForModeration')
+            ->once()
+            ->andReturn(['gore', 'person', 'fire', 'crowd']);
+        $this->app->instance(PhotoAutoTagger::class, $mock);
+
+        (new ModerateSeriesContent($series->id))->handle($mock);
+
+        $series->refresh();
+        $this->assertSame(Series::PUBLICATION_PUBLISHED, $series->publication_status);
+        $this->assertSame(Series::MODERATION_APPROVED, $series->moderation_status);
+        $this->assertTrue((bool) $series->is_public);
+        $this->assertSame([], (array) $series->moderation_labels);
+    }
+
+    public function test_moderation_rejects_gore_when_harm_support_tag_is_present(): void
+    {
+        $author = User::factory()->create();
+        $series = Series::query()->create([
+            'user_id' => $author->id,
+            'title' => 'Actual harm evidence',
+            'is_public' => false,
+            'publication_status' => Series::PUBLICATION_PENDING_MODERATION,
+            'moderation_status' => Series::MODERATION_PENDING,
+        ]);
+
+        Photo::query()->create([
+            'series_id' => $series->id,
+            'path' => 'photos/series/actual-harm.jpg',
+            'original_name' => 'actual-harm.jpg',
+            'size' => 1000,
+            'mime' => 'image/jpeg',
+        ]);
+
+        $mock = \Mockery::mock(PhotoAutoTagger::class);
+        $mock->shouldReceive('detectTagsForModeration')
+            ->once()
+            ->andReturn(['gore', 'blood', 'person']);
+        $this->app->instance(PhotoAutoTagger::class, $mock);
+
+        (new ModerateSeriesContent($series->id))->handle($mock);
+
+        $series->refresh();
+        $this->assertSame(Series::PUBLICATION_REJECTED, $series->publication_status);
+        $this->assertSame(Series::MODERATION_REJECTED, $series->moderation_status);
+        $this->assertFalse((bool) $series->is_public);
+        $this->assertContains('gore', (array) $series->moderation_labels);
+    }
+
     public function test_moderation_rejects_human_required_contextual_risk_when_direct_risk_is_present(): void
     {
         $author = User::factory()->create();

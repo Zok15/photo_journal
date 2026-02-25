@@ -83,6 +83,8 @@ class ModerateSeriesContent implements ShouldQueue, ShouldBeUnique
         $directContextualWeakSupport = $this->directContextualWeakSupportTagLookup();
         $humanRequiredContextualRisk = $this->humanRequiredContextualRiskTagLookup();
         $directSupportRequiredContextualRisk = $this->directSupportRequiredContextualRiskTagLookup();
+        $harmSupportRequiredContextualRisk = $this->harmSupportRequiredContextualRiskTagLookup();
+        $harmSupportTags = $this->harmSupportTagLookup();
         $alwaysHumanContextualRisk = $this->alwaysHumanContextualRiskTagLookup();
 
         $series->photos()
@@ -102,6 +104,8 @@ class ModerateSeriesContent implements ShouldQueue, ShouldBeUnique
                 $directContextualWeakSupport,
                 $humanRequiredContextualRisk,
                 $directSupportRequiredContextualRisk,
+                $harmSupportRequiredContextualRisk,
+                $harmSupportTags,
                 $alwaysHumanContextualRisk,
                 &$matchedHardLabels,
                 &$matchedLabelPhotoIds,
@@ -136,6 +140,8 @@ class ModerateSeriesContent implements ShouldQueue, ShouldBeUnique
                             $contextSensitiveSupport,
                             $humanRequiredContextualRisk,
                             $directSupportRequiredContextualRisk,
+                            $harmSupportRequiredContextualRisk,
+                            $harmSupportTags,
                             $alwaysHumanContextualRisk
                         );
                         foreach (array_keys($photoMatched) as $label) {
@@ -552,6 +558,52 @@ class ModerateSeriesContent implements ShouldQueue, ShouldBeUnique
     }
 
     /**
+     * @return array<string, true>
+     */
+    private function harmSupportRequiredContextualRiskTagLookup(): array
+    {
+        $lookup = [];
+
+        foreach ((array) config('moderation.contextual_risk_requires_harm_support_tags', []) as $tag) {
+            if (!is_string($tag)) {
+                continue;
+            }
+
+            $normalized = $this->normalizeTag($tag);
+            if ($normalized === '') {
+                continue;
+            }
+
+            $lookup[$normalized] = true;
+        }
+
+        return $lookup;
+    }
+
+    /**
+     * @return array<string, true>
+     */
+    private function harmSupportTagLookup(): array
+    {
+        $lookup = [];
+
+        foreach ((array) config('moderation.contextual_risk_harm_support_tags', []) as $tag) {
+            if (!is_string($tag)) {
+                continue;
+            }
+
+            $normalized = $this->normalizeTag($tag);
+            if ($normalized === '') {
+                continue;
+            }
+
+            $lookup[$normalized] = true;
+        }
+
+        return $lookup;
+    }
+
+    /**
      * @param array<int, string> $normalizedTags
      * @param array<string, string> $blocked
      * @param array<string, string> $contextualRisk
@@ -564,6 +616,8 @@ class ModerateSeriesContent implements ShouldQueue, ShouldBeUnique
      * @param array<string, true> $contextSensitiveSupport
      * @param array<string, true> $humanRequiredContextualRisk
      * @param array<string, true> $directSupportRequiredContextualRisk
+     * @param array<string, true> $harmSupportRequiredContextualRisk
+     * @param array<string, true> $harmSupportTags
      * @param array<string, true> $alwaysHumanContextualRisk
      * @return array<string, true>
      */
@@ -580,6 +634,8 @@ class ModerateSeriesContent implements ShouldQueue, ShouldBeUnique
         array $contextSensitiveSupport,
         array $humanRequiredContextualRisk,
         array $directSupportRequiredContextualRisk,
+        array $harmSupportRequiredContextualRisk,
+        array $harmSupportTags,
         array $alwaysHumanContextualRisk
     ): array {
         $matched = [];
@@ -588,6 +644,7 @@ class ModerateSeriesContent implements ShouldQueue, ShouldBeUnique
         $hasDirectSupport = false;
         $hasDirectContextualRisk = false;
         $hasContextSensitiveSupport = false;
+        $hasHarmSupport = false;
 
         foreach ($normalizedTags as $tag) {
             if (!is_string($tag) || $tag === '') {
@@ -608,6 +665,9 @@ class ModerateSeriesContent implements ShouldQueue, ShouldBeUnique
             }
             if (isset($contextSensitiveSupport[$tag])) {
                 $hasContextSensitiveSupport = true;
+            }
+            if (isset($harmSupportTags[$tag])) {
+                $hasHarmSupport = true;
             }
         }
 
@@ -639,6 +699,15 @@ class ModerateSeriesContent implements ShouldQueue, ShouldBeUnique
                 $isContextualRisk
                 && isset($directSupportRequiredContextualRisk[$tag])
                 && !$hasDirectSupport
+                && !$hasDirectContextualRisk
+            ) {
+                continue;
+            }
+
+            if (
+                $isContextualRisk
+                && isset($harmSupportRequiredContextualRisk[$tag])
+                && !$hasHarmSupport
                 && !$hasDirectContextualRisk
             ) {
                 continue;
