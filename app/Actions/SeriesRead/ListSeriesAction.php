@@ -26,6 +26,8 @@ class ListSeriesAction
         $statusOnly = (bool) ($validated['status_only'] ?? false);
         $includeBlockingTags = (bool) ($validated['include_blocking_tags'] ?? false);
         $perPage = $validated['per_page'] ?? 15;
+        $sort = (string) ($validated['sort'] ?? 'new');
+        $seriesTable = (new Series())->getTable();
 
         $query = Series::query()->where('user_id', $userId);
         if (! $statusOnly) {
@@ -88,10 +90,31 @@ class ListSeriesAction
             $query->whereDate('created_at', '<=', $dateTo);
         }
 
-        if (($validated['sort'] ?? null) === 'old') {
-            $query->oldest();
+        if (in_array($sort, ['taken_new', 'taken_old'], true)) {
+            $photoTakenSubquery = DB::table('photos')
+                ->leftJoin('photo_metadata', 'photo_metadata.photo_id', '=', 'photos.id')
+                ->selectRaw('photos.series_id, MAX(photo_metadata.taken_at) as latest_taken_at')
+                ->groupBy('photos.series_id');
+
+            $query
+                ->leftJoinSub($photoTakenSubquery, 'photo_taken_sort', function ($join) use ($seriesTable): void {
+                    $join->on('photo_taken_sort.series_id', '=', $seriesTable.'.id');
+                })
+                ->select($seriesTable.'.*');
+
+            if ($sort === 'taken_old') {
+                $query
+                    ->orderByRaw('COALESCE(photo_taken_sort.latest_taken_at, '.$seriesTable.'.created_at) ASC')
+                    ->orderBy($seriesTable.'.id');
+            } else {
+                $query
+                    ->orderByRaw('COALESCE(photo_taken_sort.latest_taken_at, '.$seriesTable.'.created_at) DESC')
+                    ->orderByDesc($seriesTable.'.id');
+            }
+        } elseif ($sort === 'old') {
+            $query->orderBy($seriesTable.'.created_at');
         } else {
-            $query->latest();
+            $query->orderByDesc($seriesTable.'.created_at');
         }
 
         $paginator = $query->paginate($perPage)->withQueryString();
@@ -137,7 +160,6 @@ class ListSeriesAction
                 ->header('Vary', 'Authorization, Accept');
         }
 
-        $seriesTable = (new Series())->getTable();
         $lastModified = $this->seriesHttpCacheService->latestTimestamp(
             (clone $query)->max($seriesTable.'.updated_at'),
             DB::table('photos')

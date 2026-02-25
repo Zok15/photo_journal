@@ -20,7 +20,7 @@ class ListSeriesRequest extends FormRequest
             'tag' => ['nullable', 'string', 'max:255'],
             'date_from' => ['nullable', 'date'],
             'date_to' => ['nullable', 'date'],
-            'sort' => ['nullable', 'in:new,old'],
+            'sort' => ['nullable', 'in:new,old,taken_new,taken_old'],
             'status_only' => ['nullable', 'boolean'],
             'include_blocking_tags' => ['nullable', 'boolean'],
         ];

@@ -759,6 +759,42 @@ class SeriesApiTest extends TestCase
         $this->assertSame([$older->id, $newer->id], $ids);
     }
 
+    public function test_index_sorts_by_shooting_datetime_when_requested(): void
+    {
+        $firstTaken = Series::query()->create([
+            'user_id' => $this->user->id,
+            'title' => 'Taken first',
+            'description' => null,
+        ]);
+        $secondTaken = Series::query()->create([
+            'user_id' => $this->user->id,
+            'title' => 'Taken second',
+            'description' => null,
+        ]);
+
+        $photoFirst = $firstTaken->photos()->create([
+            'path' => 'photos/series/'.$firstTaken->id.'/first.jpg',
+            'original_name' => 'first.jpg',
+        ]);
+        $photoFirst->metadata()->create([
+            'taken_at' => '2026-02-01 08:00:00',
+        ]);
+
+        $photoSecond = $secondTaken->photos()->create([
+            'path' => 'photos/series/'.$secondTaken->id.'/second.jpg',
+            'original_name' => 'second.jpg',
+        ]);
+        $photoSecond->metadata()->create([
+            'taken_at' => '2026-02-10 09:30:00',
+        ]);
+
+        $response = $this->getJson('/api/v1/series?sort=taken_old');
+        $response->assertOk();
+
+        $ids = collect($response->json('data'))->pluck('id')->all();
+        $this->assertSame([$firstTaken->id, $secondTaken->id], array_slice($ids, 0, 2));
+    }
+
     public function test_index_supports_page_and_per_page_parameters(): void
     {
         for ($i = 1; $i <= 3; $i++) {

@@ -85,6 +85,44 @@ class PublicSeriesApiTest extends TestCase
         $response->assertJsonPath('data.0.title', 'Alice public');
     }
 
+    public function test_public_index_sorts_by_shooting_datetime_when_requested(): void
+    {
+        $author = User::factory()->create(['name' => 'Alice']);
+
+        $firstTaken = Series::query()->create([
+            'user_id' => $author->id,
+            'title' => 'Taken first public',
+            'is_public' => true,
+        ]);
+        $secondTaken = Series::query()->create([
+            'user_id' => $author->id,
+            'title' => 'Taken second public',
+            'is_public' => true,
+        ]);
+
+        $photoFirst = $firstTaken->photos()->create([
+            'path' => 'photos/public/'.$firstTaken->id.'/first.jpg',
+            'original_name' => 'first.jpg',
+        ]);
+        $photoFirst->metadata()->create([
+            'taken_at' => '2026-01-15 07:00:00',
+        ]);
+
+        $photoSecond = $secondTaken->photos()->create([
+            'path' => 'photos/public/'.$secondTaken->id.'/second.jpg',
+            'original_name' => 'second.jpg',
+        ]);
+        $photoSecond->metadata()->create([
+            'taken_at' => '2026-02-20 11:20:00',
+        ]);
+
+        $response = $this->getJson('/api/v1/public/series?sort=taken_old');
+        $response->assertOk();
+
+        $ids = collect($response->json('data'))->pluck('id')->all();
+        $this->assertSame([$firstTaken->id, $secondTaken->id], array_slice($ids, 0, 2));
+    }
+
     public function test_public_show_returns_public_series_with_photos_for_guest(): void
     {
         $author = User::factory()->create(['name' => 'Alice']);
