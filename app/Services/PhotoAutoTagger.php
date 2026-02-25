@@ -408,7 +408,8 @@ class PhotoAutoTagger
         }
 
         $visionHints = $this->buildVisionHints($preparedBeforeVision, $series, $moderationMode);
-        $all = [...$all, ...$this->visionTaggerClient->detectTags($disk, (string) $photo->path, $visionHints)];
+        $visionPath = $this->resolveVisionSourcePath($photo, $disk);
+        $all = [...$all, ...$this->visionTaggerClient->detectTags($disk, $visionPath, $visionHints)];
 
         return $this->normalizeAndDedupeTags($all)
             ->take(self::MAX_TAGS)
@@ -970,6 +971,29 @@ class PhotoAutoTagger
         }
 
         return is_string($absolutePath) && $absolutePath !== '' && is_file($absolutePath) ? $absolutePath : null;
+    }
+
+    private function resolveVisionSourcePath(Photo $photo, string $disk): string
+    {
+        $fallbackPath = (string) $photo->path;
+        $previewPath = trim((string) ($photo->preview_path ?? ''));
+        if ($previewPath === '') {
+            return $fallbackPath;
+        }
+
+        if ($this->resolveAbsolutePath($disk, $previewPath) !== null) {
+            return $previewPath;
+        }
+
+        try {
+            if (Storage::disk($disk)->exists($previewPath)) {
+                return $previewPath;
+            }
+        } catch (\Throwable) {
+            return $fallbackPath;
+        }
+
+        return $fallbackPath;
     }
 
     private function findOrCreateTagSafely(string $name): Tag

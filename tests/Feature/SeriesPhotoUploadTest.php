@@ -411,6 +411,51 @@ class SeriesPhotoUploadTest extends TestCase
         $this->assertContains('snowdrop', $names);
     }
 
+    public function test_retag_uses_preview_path_for_vision_when_available(): void
+    {
+        config()->set('filesystems.default', 'local');
+        config()->set('vision.enabled', true);
+        Storage::fake('local');
+
+        $series = Series::query()->create([
+            'user_id' => $this->user->id,
+            'title' => 'Preview path vision',
+            'description' => 'Use preview for vision request',
+        ]);
+
+        $upload = $this->post("/api/v1/series/{$series->id}/photos", [
+            'photos' => [$this->fakeImage('preview-check.jpg')],
+        ]);
+        $upload->assertCreated();
+
+        $photoId = (int) $upload->json('photos_created.0.id');
+        $photo = $series->photos()->findOrFail($photoId);
+        $previewPath = "photos/series/{$series->id}/previews/preview-check_w1280.webp";
+        $photo->forceFill([
+            'preview_path' => $previewPath,
+        ])->save();
+        Storage::disk('local')->put($previewPath, 'preview-bytes');
+
+        $series->tags()->detach();
+
+        $vision = \Mockery::mock(VisionTaggerClient::class);
+        $vision->shouldReceive('isEnabled')->andReturn(true);
+        $vision->shouldReceive('isHealthy')->andReturn(true);
+        $vision->shouldReceive('detectTags')
+            ->once()
+            ->withArgs(function (string $disk, string $path) use ($previewPath): bool {
+                return $disk === 'local' && $path === $previewPath;
+            })
+            ->andReturn(['snowdrop']);
+        $this->app->instance(VisionTaggerClient::class, $vision);
+
+        $response = $this->postJson("/api/v1/series/{$series->id}/photos/retag");
+        $response->assertOk();
+
+        $names = $series->fresh()->load('tags')->tags->pluck('name')->all();
+        $this->assertContains('snowdrop', $names);
+    }
+
     public function test_upload_and_retag_work_with_slug_route_key(): void
     {
         config()->set('filesystems.default', 'local');
