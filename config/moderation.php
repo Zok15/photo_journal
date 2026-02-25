@@ -52,4 +52,14 @@ return [
         static fn (string $value): string => trim($value),
         explode(',', (string) env('MODERATION_HUMAN_CONTEXT_TAGS', 'person,people,portrait,crowd,man,woman,boy,girl,baby,child,teenager,adult,elderlyPerson,clothing'))
     ))),
+    // Labels in this list are blocked only if they are confirmed on N distinct photos.
+    // This reduces false positives from single-frame model noise.
+    'consensus_required_labels' => array_values(array_filter(array_map(
+        static fn (string $value): string => trim($value),
+        explode(',', (string) env(
+            'MODERATION_CONSENSUS_REQUIRED_LABELS',
+            'nsfw,gore,selfHarm,nudity,nude,explicitNudity,femaleBreast,topless,pornography,sexualContent,adultContent,violence,blood'
+        ))
+    ))),
+    'consensus_min_distinct_photos' => max(1, (int) env('MODERATION_CONSENSUS_MIN_DISTINCT_PHOTOS', 2)),
 ];

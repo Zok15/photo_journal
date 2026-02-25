@@ -70,7 +70,7 @@ class ModerateSeriesContent implements ShouldQueue, ShouldBeUnique
 
         $disk = config('filesystems.default');
         $matchedHardLabels = [];
-        $hardBlockedDetected = false;
+        $matchedLabelPhotoIds = [];
         $processedPhotos = 0;
         $failedPhotos = 0;
         $benignContext = $this->benignContextTagLookup();
@@ -102,7 +102,7 @@ class ModerateSeriesContent implements ShouldQueue, ShouldBeUnique
                 $humanRequiredContextualRisk,
                 $alwaysHumanContextualRisk,
                 &$matchedHardLabels,
-                &$hardBlockedDetected,
+                &$matchedLabelPhotoIds,
                 &$processedPhotos,
                 &$failedPhotos
             ) {
@@ -137,11 +137,8 @@ class ModerateSeriesContent implements ShouldQueue, ShouldBeUnique
                         );
                         foreach (array_keys($photoMatched) as $label) {
                             $matchedHardLabels[$label] = true;
-                        }
-
-                        if ($photoMatched !== []) {
-                            $hardBlockedDetected = true;
-                            break;
+                            $matchedLabelPhotoIds[$label] ??= [];
+                            $matchedLabelPhotoIds[$label][(int) $photo->id] = true;
                         }
                     } catch (\Throwable $e) {
                         $failedPhotos++;
@@ -152,13 +149,9 @@ class ModerateSeriesContent implements ShouldQueue, ShouldBeUnique
                         ]);
                     }
                 }
-
-                if ($hardBlockedDetected) {
-                    return false;
-                }
             });
 
-        if ($failedPhotos > 0 && !$hardBlockedDetected) {
+        if ($failedPhotos > 0) {
             Log::warning('Series moderation postponed: one or more photos failed during tagging.', [
                 'series_id' => $series->id,
                 'failed_photos' => $failedPhotos,
@@ -169,6 +162,7 @@ class ModerateSeriesContent implements ShouldQueue, ShouldBeUnique
         }
 
         $hardLabels = array_keys($matchedHardLabels);
+        $hardLabels = $this->applyConsensusRule($hardLabels, $matchedLabelPhotoIds, (int) $series->id);
         sort($hardLabels);
 
         if ($hardLabels !== []) {
@@ -191,12 +185,84 @@ class ModerateSeriesContent implements ShouldQueue, ShouldBeUnique
         try {
             $base = (string) config('vision.url', 'http://127.0.0.1:8010/tag');
             $healthUrl = preg_replace('#/tag$#', '/health', $base) ?: $base;
-            $response = Http::timeout(2)->acceptJson()->get($healthUrl);
+            $timeoutSeconds = max(1, (int) config('vision.health_timeout_seconds', 6));
+            $response = Http::timeout($timeoutSeconds)->acceptJson()->get($healthUrl);
 
             return !$response->ok() || ($response->json('ok') !== true);
         } catch (\Throwable) {
             return true;
         }
+    }
+
+    /**
+     * @param array<int, string> $labels
+     * @param array<string, array<int, true>> $matchedLabelPhotoIds
+     * @return array<int, string>
+     */
+    private function applyConsensusRule(array $labels, array $matchedLabelPhotoIds, int $seriesId): array
+    {
+        $minDistinctPhotos = max(1, (int) config('moderation.consensus_min_distinct_photos', 2));
+        if ($minDistinctPhotos <= 1) {
+            return $labels;
+        }
+
+        $consensusLookup = $this->consensusRequiredLabelLookup();
+        if ($consensusLookup === []) {
+            return $labels;
+        }
+
+        $accepted = [];
+        foreach ($labels as $label) {
+            if (!is_string($label) || trim($label) === '') {
+                continue;
+            }
+
+            $normalized = $this->normalizeTag($label);
+            if (!isset($consensusLookup[$normalized])) {
+                $accepted[] = $label;
+
+                continue;
+            }
+
+            $distinctPhotos = count($matchedLabelPhotoIds[$label] ?? []);
+            if ($distinctPhotos >= $minDistinctPhotos) {
+                $accepted[] = $label;
+
+                continue;
+            }
+
+            Log::info('Series moderation label suppressed by consensus rule.', [
+                'series_id' => $seriesId,
+                'label' => $label,
+                'distinct_photos' => $distinctPhotos,
+                'required_distinct_photos' => $minDistinctPhotos,
+            ]);
+        }
+
+        return $accepted;
+    }
+
+    /**
+     * @return array<string, true>
+     */
+    private function consensusRequiredLabelLookup(): array
+    {
+        $lookup = [];
+
+        foreach ((array) config('moderation.consensus_required_labels', []) as $label) {
+            if (!is_string($label)) {
+                continue;
+            }
+
+            $normalized = $this->normalizeTag($label);
+            if ($normalized === '') {
+                continue;
+            }
+
+            $lookup[$normalized] = true;
+        }
+
+        return $lookup;
     }
 
     /**

@@ -25,6 +25,8 @@ class SeriesModerationApiTest extends TestCase
         parent::setUp();
 
         config()->set('vision.enabled', false);
+        // Keep legacy moderation behavior in existing tests unless a test overrides it.
+        config()->set('moderation.consensus_min_distinct_photos', 1);
     }
 
     public function test_store_public_series_goes_to_pending_moderation(): void
@@ -318,6 +320,43 @@ class SeriesModerationApiTest extends TestCase
         $this->assertSame(Series::PUBLICATION_PENDING_MODERATION, $series->publication_status);
         $this->assertSame(Series::MODERATION_PENDING, $series->moderation_status);
         $this->assertFalse((bool) $series->is_public);
+    }
+
+    public function test_moderation_suppresses_single_photo_safety_label_when_consensus_required(): void
+    {
+        config()->set('moderation.consensus_min_distinct_photos', 2);
+        config()->set('moderation.consensus_required_labels', ['nsfw', 'gore', 'selfHarm', 'nudity']);
+
+        $author = User::factory()->create();
+        $series = Series::query()->create([
+            'user_id' => $author->id,
+            'title' => 'Festival false positive guard',
+            'is_public' => false,
+            'publication_status' => Series::PUBLICATION_PENDING_MODERATION,
+            'moderation_status' => Series::MODERATION_PENDING,
+        ]);
+
+        Photo::query()->create([
+            'series_id' => $series->id,
+            'path' => 'photos/series/festival-1.jpg',
+            'original_name' => 'festival-1.jpg',
+            'size' => 12345,
+            'mime' => 'image/jpeg',
+        ]);
+
+        $mock = \Mockery::mock(PhotoAutoTagger::class);
+        $mock->shouldReceive('detectTagsForModeration')
+            ->once()
+            ->andReturn(['nsfw', 'gore', 'nudity', 'selfHarm', 'outdoorScene']);
+        $this->app->instance(PhotoAutoTagger::class, $mock);
+
+        (new ModerateSeriesContent($series->id))->handle($mock);
+
+        $series->refresh();
+
+        $this->assertSame(Series::PUBLICATION_PUBLISHED, $series->publication_status);
+        $this->assertSame(Series::MODERATION_APPROVED, $series->moderation_status);
+        $this->assertTrue((bool) $series->is_public);
     }
 
     public function test_moderation_does_not_reject_direct_contextual_risk_without_support_tags(): void
