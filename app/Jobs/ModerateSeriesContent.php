@@ -42,6 +42,7 @@ class ModerateSeriesContent implements ShouldQueue, ShouldBeUnique
 
     public function handle(PhotoAutoTagger $photoAutoTagger): void
     {
+        $startedAt = microtime(true);
         $series = Series::query()->find($this->seriesId);
         if ($series === null) {
             return;
@@ -69,6 +70,8 @@ class ModerateSeriesContent implements ShouldQueue, ShouldBeUnique
 
         $disk = config('filesystems.default');
         $matchedHardLabels = [];
+        $hardBlockedDetected = false;
+        $processedPhotos = 0;
         $failedPhotos = 0;
         $benignContext = $this->benignContextTagLookup();
         $humanContext = $this->humanContextTagLookup();
@@ -99,10 +102,13 @@ class ModerateSeriesContent implements ShouldQueue, ShouldBeUnique
                 $humanRequiredContextualRisk,
                 $alwaysHumanContextualRisk,
                 &$matchedHardLabels,
+                &$hardBlockedDetected,
+                &$processedPhotos,
                 &$failedPhotos
-            ): void {
+            ) {
                 foreach ($photos as $photo) {
                     try {
+                        $processedPhotos++;
                         $tags = $photoAutoTagger->detectTagsForModeration($photo, $disk, $series);
                         $normalizedTags = [];
 
@@ -132,6 +138,11 @@ class ModerateSeriesContent implements ShouldQueue, ShouldBeUnique
                         foreach (array_keys($photoMatched) as $label) {
                             $matchedHardLabels[$label] = true;
                         }
+
+                        if ($photoMatched !== []) {
+                            $hardBlockedDetected = true;
+                            break;
+                        }
                     } catch (\Throwable $e) {
                         $failedPhotos++;
                         Log::warning('Series moderation failed for photo.', [
@@ -141,9 +152,13 @@ class ModerateSeriesContent implements ShouldQueue, ShouldBeUnique
                         ]);
                     }
                 }
+
+                if ($hardBlockedDetected) {
+                    return false;
+                }
             });
 
-        if ($failedPhotos > 0) {
+        if ($failedPhotos > 0 && !$hardBlockedDetected) {
             Log::warning('Series moderation postponed: one or more photos failed during tagging.', [
                 'series_id' => $series->id,
                 'failed_photos' => $failedPhotos,
@@ -158,11 +173,13 @@ class ModerateSeriesContent implements ShouldQueue, ShouldBeUnique
 
         if ($hardLabels !== []) {
             $this->rejectSeries($series, $hardLabels);
+            $this->logModerationCompleted($series, 'rejected', $processedPhotos, $hardLabels, $startedAt);
 
             return;
         }
 
         $this->approveSeries($series, []);
+        $this->logModerationCompleted($series, 'approved', $processedPhotos, [], $startedAt);
     }
 
     private function isVisionEnabledAndUnhealthy(): bool
@@ -592,5 +609,24 @@ class ModerateSeriesContent implements ShouldQueue, ShouldBeUnique
     {
         SeriesResponseCache::bumpUser((int) $series->user_id);
         SeriesResponseCache::bumpSeries((int) $series->id);
+    }
+
+    /**
+     * @param array<int, string> $labels
+     */
+    private function logModerationCompleted(
+        Series $series,
+        string $decision,
+        int $processedPhotos,
+        array $labels,
+        float $startedAt
+    ): void {
+        Log::info('Series moderation completed.', [
+            'series_id' => (int) $series->id,
+            'decision' => $decision,
+            'processed_photos' => $processedPhotos,
+            'labels' => $labels,
+            'elapsed_ms' => (int) round((microtime(true) - $startedAt) * 1000),
+        ]);
     }
 }
