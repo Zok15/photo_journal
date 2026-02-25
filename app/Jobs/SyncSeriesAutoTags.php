@@ -18,6 +18,11 @@ class SyncSeriesAutoTags implements ShouldQueue
     use Queueable;
     use SerializesModels;
 
+    /**
+     * Sync may process many photos and call vision service; default 60s is too low.
+     */
+    public int $timeout = 1200;
+
     public function __construct(public int $seriesId)
     {
     }

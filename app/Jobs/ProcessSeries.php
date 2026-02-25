@@ -21,6 +21,11 @@ class ProcessSeries implements ShouldQueue
     use Queueable;
     use SerializesModels;
 
+    /**
+     * Preview generation can run for large batches and exceed default 60s.
+     */
+    public int $timeout = 1200;
+
     public function __construct(public int $seriesId)
     {
     }
