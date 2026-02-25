@@ -47,7 +47,8 @@ class UpdateSeriesAction
         $series->save();
 
         if ($requestedPublic === true && (string) $series->publication_status === Series::PUBLICATION_PENDING_MODERATION) {
-            ModerateSeriesContent::dispatch($series->id);
+            ModerateSeriesContent::dispatch($series->id)
+                ->onQueue((string) config('queue.moderation_queue', 'moderation'));
         }
 
         $this->seriesCacheService->invalidateForSeries($series);

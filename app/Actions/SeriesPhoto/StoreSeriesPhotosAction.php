@@ -74,6 +74,7 @@ class StoreSeriesPhotosAction
             'moderated_by' => null,
         ])->save();
 
-        ModerateSeriesContent::dispatch((int) $series->id);
+        ModerateSeriesContent::dispatch((int) $series->id)
+            ->onQueue((string) config('queue.moderation_queue', 'moderation'));
     }
 }

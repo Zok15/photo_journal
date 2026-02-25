@@ -65,7 +65,8 @@ class StoreSeriesAction
             SyncSeriesAutoTags::dispatch($series->id);
 
             if ($requestedPublic) {
-                ModerateSeriesContent::dispatch($series->id);
+                ModerateSeriesContent::dispatch($series->id)
+                    ->onQueue((string) config('queue.moderation_queue', 'moderation'));
             }
         }
 

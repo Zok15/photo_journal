@@ -126,4 +126,7 @@ return [
         'table' => 'failed_jobs',
     ],
 
+    // Queue name dedicated to content moderation jobs.
+    'moderation_queue' => env('MODERATION_QUEUE', 'moderation'),
+
 ];
