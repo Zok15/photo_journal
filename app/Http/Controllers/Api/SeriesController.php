@@ -63,7 +63,8 @@ class SeriesController extends Controller
             (int) $request->user()->id,
             $request->validated(),
             $request->file('photos', []),
-            (string) config('filesystems.default')
+            (string) config('filesystems.default'),
+            (bool) $request->boolean('defer_post_upload_jobs')
         );
 
         return response()->json($result['payload'], $result['status']);

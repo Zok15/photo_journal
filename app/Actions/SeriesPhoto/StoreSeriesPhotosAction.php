@@ -21,7 +21,7 @@ class StoreSeriesPhotosAction
      * @param array<int, \Illuminate\Http\UploadedFile> $files
      * @return array{status:int, payload:array<string,mixed>}
      */
-    public function execute(Series $series, array $files, string $disk): array
+    public function execute(Series $series, array $files, string $disk, bool $deferPostUploadJobs = false): array
     {
         $uploadResult = $this->photoBatchUploader->uploadToSeries($series, $files, $disk);
         $created = $uploadResult['created'];
@@ -37,9 +37,11 @@ class StoreSeriesPhotosAction
             ];
         }
 
-        ProcessSeries::dispatch($series->id);
-        SyncSeriesAutoTags::dispatch($series->id);
-        $this->queueModerationIfNeeded($series);
+        if (!$deferPostUploadJobs) {
+            ProcessSeries::dispatch($series->id);
+            SyncSeriesAutoTags::dispatch($series->id);
+            $this->queueModerationIfNeeded($series);
+        }
         $this->seriesCacheService->invalidateForSeries($series);
 
         return [
@@ -47,7 +49,7 @@ class StoreSeriesPhotosAction
             'payload' => [
                 'photos_created' => $created,
                 'photos_failed' => $failed,
-                'tags_sync' => 'queued',
+                'tags_sync' => $deferPostUploadJobs ? 'deferred' : 'queued',
             ],
         ];
     }

@@ -17,6 +17,7 @@ class StoreSeriesPhotosRequest extends FormRequest
     public function rules(): array
     {
         return [
+            'defer_post_upload_jobs' => ['nullable', 'boolean'],
             'photos' => ['required', 'array', 'min:1', 'max:100'],
             'photos.*' => [
                 'required',

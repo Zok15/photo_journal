@@ -22,7 +22,7 @@ class StoreSeriesAction
      * @param array<int, \Illuminate\Http\UploadedFile> $files
      * @return array{status:int, payload:array<string,mixed>}
      */
-    public function execute(int $userId, array $validated, array $files, string $disk): array
+    public function execute(int $userId, array $validated, array $files, string $disk, bool $deferPostUploadJobs = false): array
     {
         $requestedPublic = (bool) ($validated['is_public'] ?? false);
 
@@ -60,11 +60,13 @@ class StoreSeriesAction
             ];
         }
 
-        ProcessSeries::dispatch($series->id);
-        SyncSeriesAutoTags::dispatch($series->id);
+        if (!$deferPostUploadJobs) {
+            ProcessSeries::dispatch($series->id);
+            SyncSeriesAutoTags::dispatch($series->id);
 
-        if ($requestedPublic) {
-            ModerateSeriesContent::dispatch($series->id);
+            if ($requestedPublic) {
+                ModerateSeriesContent::dispatch($series->id);
+            }
         }
 
         $this->seriesCacheService->invalidate($userId, (int) $series->id);
@@ -77,7 +79,7 @@ class StoreSeriesAction
                 'status' => 'queued',
                 'photos_created' => $created,
                 'photos_failed' => $failed,
-                'tags_sync' => 'queued',
+                'tags_sync' => $deferPostUploadJobs ? 'deferred' : 'queued',
                 'publication_status' => $series->publication_status,
                 'moderation_status' => $series->moderation_status,
             ],

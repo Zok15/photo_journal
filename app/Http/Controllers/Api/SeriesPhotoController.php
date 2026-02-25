@@ -52,7 +52,8 @@ class SeriesPhotoController extends Controller
         $result = $this->storeSeriesPhotosAction->execute(
             $series,
             $request->file('photos', []),
-            (string) config('filesystems.default')
+            (string) config('filesystems.default'),
+            (bool) $request->boolean('defer_post_upload_jobs')
         );
 
         return response()->json($result['payload'], $result['status']);

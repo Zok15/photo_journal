@@ -577,7 +577,7 @@ class SeriesModerationApiTest extends TestCase
         $this->assertTrue((bool) $series->is_public);
     }
 
-    public function test_moderation_rejects_human_required_contextual_risk_with_human_context(): void
+    public function test_moderation_does_not_reject_weapon_with_human_context(): void
     {
         $author = User::factory()->create();
         $series = Series::query()->create([
@@ -605,10 +605,9 @@ class SeriesModerationApiTest extends TestCase
         (new ModerateSeriesContent($series->id))->handle($mock);
 
         $series->refresh();
-        $this->assertSame(Series::PUBLICATION_REJECTED, $series->publication_status);
-        $this->assertSame(Series::MODERATION_REJECTED, $series->moderation_status);
-        $this->assertFalse((bool) $series->is_public);
-        $this->assertContains('weapon', (array) $series->moderation_labels);
+        $this->assertSame(Series::PUBLICATION_PUBLISHED, $series->publication_status);
+        $this->assertSame(Series::MODERATION_APPROVED, $series->moderation_status);
+        $this->assertTrue((bool) $series->is_public);
     }
 
     public function test_sync_tags_rejects_already_published_series_on_hard_nsfw_tag(): void

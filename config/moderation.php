@@ -22,7 +22,7 @@ return [
     ))),
     'contextual_risk_tags' => array_values(array_filter(array_map(
         static fn (string $value): string => trim($value),
-        explode(',', (string) env('MODERATION_CONTEXTUAL_RISK_TAGS', 'pornography,nsfw,sexualContent,adultContent,weapon,violence,blood,gore'))
+        explode(',', (string) env('MODERATION_CONTEXTUAL_RISK_TAGS', 'pornography,nsfw,sexualContent,adultContent,gore'))
     ))),
     'contextual_risk_direct_block_tags' => array_values(array_filter(array_map(
         static fn (string $value): string => trim($value),
@@ -38,11 +38,11 @@ return [
     ))),
     'contextual_risk_requires_human_tags' => array_values(array_filter(array_map(
         static fn (string $value): string => trim($value),
-        explode(',', (string) env('MODERATION_CONTEXTUAL_RISK_REQUIRES_HUMAN_TAGS', 'pornography,nsfw,weapon,violence,blood,gore'))
+        explode(',', (string) env('MODERATION_CONTEXTUAL_RISK_REQUIRES_HUMAN_TAGS', 'pornography,nsfw,gore'))
     ))),
     'contextual_risk_always_human_tags' => array_values(array_filter(array_map(
         static fn (string $value): string => trim($value),
-        explode(',', (string) env('MODERATION_CONTEXTUAL_RISK_ALWAYS_HUMAN_TAGS', 'weapon,violence,blood,gore'))
+        explode(',', (string) env('MODERATION_CONTEXTUAL_RISK_ALWAYS_HUMAN_TAGS', 'gore'))
     ))),
     'benign_context_tags' => array_values(array_filter(array_map(
         static fn (string $value): string => trim($value),
