@@ -11,6 +11,7 @@ use App\Services\ExifMetadataExtractor;
 use App\Services\VisionTaggerClient;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Storage;
 use Laravel\Sanctum\Sanctum;
@@ -454,6 +455,43 @@ class SeriesPhotoUploadTest extends TestCase
 
         $names = $series->fresh()->load('tags')->tags->pluck('name')->all();
         $this->assertContains('snowdrop', $names);
+    }
+
+    public function test_retag_uses_cached_vision_result_for_same_photo_content(): void
+    {
+        Queue::fake();
+        config()->set('filesystems.default', 'local');
+        config()->set('vision.enabled', true);
+        config()->set('vision.model_version', 'test-v1-'.(string) \Illuminate\Support\Str::uuid());
+        config()->set('vision.cache_ttl_seconds', 3600);
+        Storage::fake('local');
+        Cache::flush();
+
+        $series = Series::query()->create([
+            'user_id' => $this->user->id,
+            'title' => 'Vision cache',
+            'description' => 'Cache hit on second retag',
+        ]);
+
+        $upload = $this->post("/api/v1/series/{$series->id}/photos", [
+            'photos' => [$this->fakeImage('cache-check.jpg')],
+        ]);
+        $upload->assertCreated();
+
+        $series->tags()->detach();
+
+        $vision = \Mockery::mock(VisionTaggerClient::class);
+        $vision->shouldReceive('isEnabled')->andReturn(true);
+        $vision->shouldReceive('isHealthy')->andReturn(true);
+        $vision->shouldReceive('detectTags')->once()->andReturn(['snowdrop']);
+        $this->app->instance(VisionTaggerClient::class, $vision);
+
+        $first = $this->postJson("/api/v1/series/{$series->id}/photos/retag");
+        $first->assertOk();
+        $first->assertJsonPath('data.processed', 1);
+        $second = $this->postJson("/api/v1/series/{$series->id}/photos/retag");
+        $second->assertOk();
+        $second->assertJsonPath('data.processed', 1);
     }
 
     public function test_upload_and_retag_work_with_slug_route_key(): void

@@ -409,7 +409,7 @@ class PhotoAutoTagger
 
         $visionHints = $this->buildVisionHints($preparedBeforeVision, $series, $moderationMode);
         $visionPath = $this->resolveVisionSourcePath($photo, $disk);
-        $all = [...$all, ...$this->visionTaggerClient->detectTags($disk, $visionPath, $visionHints)];
+        $all = [...$all, ...$this->detectVisionTagsCached($photo, $disk, $visionPath, $visionHints, $moderationMode)];
 
         return $this->normalizeAndDedupeTags($all)
             ->take(self::MAX_TAGS)
@@ -994,6 +994,64 @@ class PhotoAutoTagger
         }
 
         return $fallbackPath;
+    }
+
+    /**
+     * @param array<int, string> $visionHints
+     * @return array<int, string>
+     */
+    private function detectVisionTagsCached(
+        Photo $photo,
+        string $disk,
+        string $visionPath,
+        array $visionHints,
+        bool $moderationMode
+    ): array {
+        $ttl = max(0, (int) config('vision.cache_ttl_seconds', 86400));
+        if ($ttl === 0) {
+            return $this->visionTaggerClient->detectTags($disk, $visionPath, $visionHints);
+        }
+
+        $fingerprint = $this->resolveVisionFileFingerprint($disk, $visionPath)
+            ?? sha1("{$visionPath}|{$photo->updated_at?->getTimestamp()}:{$photo->size}");
+        $modelVersion = trim((string) config('vision.model_version', 'v1'));
+        $mode = $moderationMode ? 'moderation' : 'tagging';
+        $cacheKey = "vision:tags:v3:{$mode}:{$modelVersion}:{$fingerprint}";
+
+        return Cache::remember($cacheKey, now()->addSeconds($ttl), function () use ($disk, $visionPath, $visionHints): array {
+            return $this->visionTaggerClient->detectTags($disk, $visionPath, $visionHints);
+        });
+    }
+
+    private function resolveVisionFileFingerprint(string $disk, string $path): ?string
+    {
+        $absolutePath = $this->resolveAbsolutePath($disk, $path);
+        if ($absolutePath !== null) {
+            $hash = @hash_file('sha1', $absolutePath);
+            return is_string($hash) && $hash !== '' ? $hash : null;
+        }
+
+        try {
+            $stream = Storage::disk($disk)->readStream($path);
+        } catch (\Throwable) {
+            return null;
+        }
+
+        if (!is_resource($stream)) {
+            return null;
+        }
+
+        $context = hash_init('sha1');
+        while (!feof($stream)) {
+            $chunk = fread($stream, 8192);
+            if (!is_string($chunk) || $chunk === '') {
+                continue;
+            }
+            hash_update($context, $chunk);
+        }
+        fclose($stream);
+
+        return hash_final($context);
     }
 
     private function findOrCreateTagSafely(string $name): Tag

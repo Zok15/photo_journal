@@ -126,7 +126,9 @@ return [
         'table' => 'failed_jobs',
     ],
 
-    // Queue name dedicated to content moderation jobs.
-    'moderation_queue' => env('MODERATION_QUEUE', 'moderation'),
+    // Queue for content moderation jobs.
+    // Defaults to "default" for backward compatibility.
+    // Set MODERATION_QUEUE=moderation and run a dedicated worker to speed it up.
+    'moderation_queue' => env('MODERATION_QUEUE', 'default'),
 
 ];
