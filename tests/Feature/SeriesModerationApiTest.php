@@ -475,6 +475,40 @@ class SeriesModerationApiTest extends TestCase
         $this->assertTrue((bool) $series->is_public);
     }
 
+    public function test_moderation_does_not_reject_nsfw_with_human_context_without_direct_support(): void
+    {
+        $author = User::factory()->create();
+        $series = Series::query()->create([
+            'user_id' => $author->id,
+            'title' => 'Festival scene',
+            'is_public' => false,
+            'publication_status' => Series::PUBLICATION_PENDING_MODERATION,
+            'moderation_status' => Series::MODERATION_PENDING,
+        ]);
+
+        Photo::query()->create([
+            'series_id' => $series->id,
+            'path' => 'photos/series/festival-scene.jpg',
+            'original_name' => 'festival-scene.jpg',
+            'size' => 1000,
+            'mime' => 'image/jpeg',
+        ]);
+
+        $mock = \Mockery::mock(PhotoAutoTagger::class);
+        $mock->shouldReceive('detectTagsForModeration')
+            ->once()
+            ->andReturn(['nsfw', 'person', 'fire', 'crowd']);
+        $this->app->instance(PhotoAutoTagger::class, $mock);
+
+        (new ModerateSeriesContent($series->id))->handle($mock);
+
+        $series->refresh();
+        $this->assertSame(Series::PUBLICATION_PUBLISHED, $series->publication_status);
+        $this->assertSame(Series::MODERATION_APPROVED, $series->moderation_status);
+        $this->assertTrue((bool) $series->is_public);
+        $this->assertSame([], (array) $series->moderation_labels);
+    }
+
     public function test_moderation_rejects_human_required_contextual_risk_when_direct_risk_is_present(): void
     {
         $author = User::factory()->create();
