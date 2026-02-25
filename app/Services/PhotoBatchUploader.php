@@ -7,6 +7,7 @@ use App\Models\Series;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
 use RuntimeException;
 use Throwable;
 
@@ -39,14 +40,15 @@ class PhotoBatchUploader
                 // Extract EXIF before writing the file to storage.
                 $preparedMetadata = $this->exifMetadataExtractor->extractFromUploadedFile($file);
 
-                $path = $this->storeOrFail($file, $directory, $disk);
+                $preparedImage = $this->prepareWebImageOrFail($file);
+                $path = $this->storeOrFail($preparedImage['binary'], $directory, $disk);
                 $storedPaths[] = $path;
 
                 $photo = $series->photos()->create([
                     'path' => $path,
                     'original_name' => $file->getClientOriginalName(),
-                    'size' => $file->getSize(),
-                    'mime' => $file->getClientMimeType(),
+                    'size' => $preparedImage['size'],
+                    'mime' => $preparedImage['mime'],
                 ]);
 
                 $this->storePreparedMetadata($photo, $file, $preparedMetadata);
@@ -90,6 +92,8 @@ class PhotoBatchUploader
                 return;
             }
 
+            $metadata['optimized_mime'] = 'image/jpeg';
+
             $size = $file->getSize();
             if ($size !== false && is_numeric($size)) {
                 $metadata['source_file_size'] = max(0, (int) $size);
@@ -105,11 +109,132 @@ class PhotoBatchUploader
         }
     }
 
-    private function storeOrFail(UploadedFile $file, string $directoryPath, string $disk): string
+    /**
+     * @return array{binary:string, mime:string, size:int}
+     */
+    private function prepareWebImageOrFail(UploadedFile $file): array
     {
-        $path = $file->store($directoryPath, $disk);
+        if (!function_exists('imagecreatefromstring') || !function_exists('imagejpeg')) {
+            throw new RuntimeException('GD image functions are unavailable.');
+        }
 
-        if (!is_string($path) || $path === '') {
+        $realPath = $file->getRealPath();
+        if (!is_string($realPath) || trim($realPath) === '') {
+            throw new RuntimeException('Uploaded file temp path is invalid.');
+        }
+
+        $sourceBinary = @file_get_contents($realPath);
+        if (!is_string($sourceBinary) || $sourceBinary === '') {
+            throw new RuntimeException('Failed to read uploaded file.');
+        }
+
+        $image = @imagecreatefromstring($sourceBinary);
+        if ($image === false) {
+            throw new RuntimeException('Uploaded file is not a decodable image.');
+        }
+
+        $maxBytes = max(256000, (int) config('photo_processing.upload_max_bytes', 2 * 1024 * 1024));
+        $maxDimension = max(640, (int) config('photo_processing.upload_max_dimension', 2560));
+        $minDimension = max(320, (int) config('photo_processing.upload_min_dimension', 900));
+        $qualityStart = max(40, min(100, (int) config('photo_processing.upload_jpeg_quality_start', 88)));
+        $qualityMin = max(25, min(95, (int) config('photo_processing.upload_jpeg_quality_min', 45)));
+
+        try {
+            $sourceWidth = imagesx($image);
+            $sourceHeight = imagesy($image);
+            if ($sourceWidth <= 0 || $sourceHeight <= 0) {
+                throw new RuntimeException('Uploaded image has invalid dimensions.');
+            }
+
+            $scale = min(1, $maxDimension / max($sourceWidth, $sourceHeight));
+            $targetWidth = max(1, (int) round($sourceWidth * $scale));
+            $targetHeight = max(1, (int) round($sourceHeight * $scale));
+
+            while (true) {
+                $canvas = $this->resampleToCanvas($image, $sourceWidth, $sourceHeight, $targetWidth, $targetHeight);
+
+                try {
+                    for ($quality = $qualityStart; $quality >= $qualityMin; $quality -= 5) {
+                        $encoded = $this->encodeJpegOrFail($canvas, $quality);
+                        $encodedSize = strlen($encoded);
+
+                        if ($encodedSize <= $maxBytes) {
+                            return [
+                                'binary' => $encoded,
+                                'mime' => 'image/jpeg',
+                                'size' => $encodedSize,
+                            ];
+                        }
+                    }
+                } finally {
+                    imagedestroy($canvas);
+                }
+
+                if (max($targetWidth, $targetHeight) <= $minDimension) {
+                    break;
+                }
+
+                $nextWidth = max($minDimension, (int) round($targetWidth * 0.85));
+                $nextHeight = max($minDimension, (int) round($targetHeight * 0.85));
+                if ($nextWidth === $targetWidth && $nextHeight === $targetHeight) {
+                    break;
+                }
+
+                $targetWidth = $nextWidth;
+                $targetHeight = $nextHeight;
+            }
+        } finally {
+            imagedestroy($image);
+        }
+
+        throw new RuntimeException('Image could not be optimized to configured max size.');
+    }
+
+    private function resampleToCanvas($source, int $sourceWidth, int $sourceHeight, int $targetWidth, int $targetHeight)
+    {
+        $canvas = imagecreatetruecolor($targetWidth, $targetHeight);
+        if ($canvas === false) {
+            throw new RuntimeException('Failed to allocate image canvas.');
+        }
+
+        $white = imagecolorallocate($canvas, 255, 255, 255);
+        imagefilledrectangle($canvas, 0, 0, $targetWidth, $targetHeight, $white);
+
+        imagecopyresampled(
+            $canvas,
+            $source,
+            0,
+            0,
+            0,
+            0,
+            $targetWidth,
+            $targetHeight,
+            $sourceWidth,
+            $sourceHeight
+        );
+
+        return $canvas;
+    }
+
+    private function encodeJpegOrFail($canvas, int $quality): string
+    {
+        ob_start();
+        $ok = imagejpeg($canvas, null, $quality);
+        $encoded = ob_get_clean();
+
+        if (!$ok || !is_string($encoded) || $encoded === '') {
+            throw new RuntimeException('Failed to encode optimized image.');
+        }
+
+        return $encoded;
+    }
+
+    private function storeOrFail(string $binary, string $directoryPath, string $disk): string
+    {
+        $path = rtrim($directoryPath, '/').'/'.Str::uuid()->toString().'.jpg';
+        $stored = Storage::disk($disk)->put($path, $binary);
+
+        if ($stored !== true) {
             throw new RuntimeException('Failed to store uploaded file.');
         }
 
