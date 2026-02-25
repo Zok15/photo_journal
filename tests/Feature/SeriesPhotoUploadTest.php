@@ -125,6 +125,45 @@ class SeriesPhotoUploadTest extends TestCase
         ]);
     }
 
+    public function test_upload_assigns_exif_camera_and_range_tags_from_metadata(): void
+    {
+        config()->set('filesystems.default', 'local');
+        Storage::fake('local');
+
+        $series = Series::query()->create([
+            'user_id' => $this->user->id,
+            'title' => 'Exif tags',
+            'description' => 'Range tags',
+        ]);
+
+        $extractor = \Mockery::mock(ExifMetadataExtractor::class);
+        $extractor->shouldReceive('extractFromUploadedFile')
+            ->once()
+            ->andReturn([
+                'camera_make' => 'Sony',
+                'camera_model' => 'A7III',
+                'iso' => 1250,
+                'exposure_time' => '1/320',
+                'focal_length_mm' => 85.0,
+                'raw_exif_json' => ['EXIF' => ['DateTimeOriginal' => '2026:02:25 11:30:00']],
+            ]);
+        $this->app->instance(ExifMetadataExtractor::class, $extractor);
+
+        $response = $this->post("/api/v1/series/{$series->id}/photos", [
+            'photos' => [$this->fakeImage('meta-tags.jpg')],
+        ]);
+
+        $response->assertCreated();
+
+        $tagNames = $series->fresh()->load('tags')->tags->pluck('name')->all();
+
+        $this->assertContains('sony', $tagNames);
+        $this->assertContains('a7iii', $tagNames);
+        $this->assertContains('iso1200', $tagNames);
+        $this->assertContains('focal90mm', $tagNames);
+        $this->assertContains('shutter1over320', $tagNames);
+    }
+
     public function test_upload_assigns_auto_tags_from_file_name(): void
     {
         config()->set('filesystems.default', 'local');

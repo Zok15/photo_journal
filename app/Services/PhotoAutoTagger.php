@@ -185,6 +185,10 @@ class PhotoAutoTagger
 
     private function isLikelyGarbageAutoTag(string $tag): bool
     {
+        if (preg_match('/^(iso\d+|focal\d+mm|shutter(?:\d+over\d+|\d+s))$/', $tag) === 1) {
+            return false;
+        }
+
         $length = strlen($tag);
 
         // Two-char tags are usually noise from model outputs and hurt retrieval quality.
@@ -373,6 +377,7 @@ class PhotoAutoTagger
         $all = [...$all, ...$nameTokens];
         $all = [...$all, ...$this->semanticTagsFromTokens($nameTokens)];
         $all = [...$all, ...$this->dateTagsFromText($baseName)];
+        $all = [...$all, ...$this->tagsFromPhotoMetadata($photo)];
 
         $absolutePath = $this->resolveAbsolutePath($disk, (string) $photo->path);
         if ($absolutePath !== null) {
@@ -587,6 +592,113 @@ class PhotoAutoTagger
         $tags = [...$tags, ...$this->semanticTagsFromTokens($nameTokens)];
 
         return $tags;
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    private function tagsFromPhotoMetadata(Photo $photo): array
+    {
+        $photo->loadMissing('metadata');
+        $metadata = $photo->metadata;
+        if ($metadata === null) {
+            return [];
+        }
+
+        $tags = [];
+
+        foreach (['camera_make', 'camera_model'] as $field) {
+            $raw = trim((string) ($metadata->{$field} ?? ''));
+            if ($raw === '') {
+                continue;
+            }
+
+            $tags = [...$tags, ...$this->tokensFromText($raw)];
+        }
+
+        $iso = (int) ($metadata->iso ?? 0);
+        if ($iso > 0) {
+            $tags[] = $this->isoStepTag($iso);
+        }
+
+        $focalLength = (float) ($metadata->focal_length_mm ?? 0);
+        if ($focalLength > 0) {
+            $tags[] = $this->focalRoundedTag($focalLength);
+        }
+
+        $exposureSeconds = $this->parseExposureSeconds((string) ($metadata->exposure_time ?? ''));
+        if ($exposureSeconds !== null) {
+            $tags[] = $this->exposureTag($exposureSeconds);
+        }
+
+        return $tags;
+    }
+
+    private function isoStepTag(int $iso): string
+    {
+        $step = (int) round($iso / 200) * 200;
+        if ($step < 100) {
+            $step = 100;
+        }
+
+        return "iso{$step}";
+    }
+
+    private function focalRoundedTag(float $focalLengthMm): string
+    {
+        $rounded = (int) round($focalLengthMm / 10) * 10;
+        if ($rounded < 10) {
+            $rounded = 10;
+        }
+
+        return "focal{$rounded}mm";
+    }
+
+    private function exposureTag(float $seconds): string
+    {
+        if ($seconds < 1) {
+            $standardDenominators = [8000, 4000, 2000, 1000, 500, 320, 250, 200, 160, 125, 100, 80, 60, 50, 40, 30, 25, 20, 15, 13, 10, 8, 6, 5, 4, 3, 2];
+            $best = $standardDenominators[0];
+            $bestDiff = abs($seconds - (1 / $best));
+
+            foreach ($standardDenominators as $denominator) {
+                $diff = abs($seconds - (1 / $denominator));
+                if ($diff < $bestDiff) {
+                    $best = $denominator;
+                    $bestDiff = $diff;
+                }
+            }
+
+            return "shutter1over{$best}";
+        }
+
+        $roundedSeconds = (int) max(1, round($seconds));
+        return "shutter{$roundedSeconds}s";
+    }
+
+    private function parseExposureSeconds(string $raw): ?float
+    {
+        $value = trim($raw);
+        if ($value === '') {
+            return null;
+        }
+
+        if (preg_match('/^(\d+(?:\.\d+)?)\s*\/\s*(\d+(?:\.\d+)?)$/', $value, $matches) === 1) {
+            $numerator = (float) $matches[1];
+            $denominator = (float) $matches[2];
+            if ($denominator <= 0.0) {
+                return null;
+            }
+
+            return $numerator / $denominator;
+        }
+
+        if (!is_numeric($value)) {
+            return null;
+        }
+
+        $seconds = (float) $value;
+        return $seconds > 0 ? $seconds : null;
     }
 
     private function normalizeTag(string $tag): string
