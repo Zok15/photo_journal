@@ -173,10 +173,27 @@ class ListSeriesAction
                 }
             ));
         } else {
+            $seriesIds = $collection
+                ->map(fn (Series $series): int => (int) $series->id)
+                ->filter(fn (int $id): bool => $id > 0)
+                ->values();
+
+            $takenAtBySeriesId = [];
+            if ($seriesIds->isNotEmpty()) {
+                $takenAtBySeriesId = DB::table('photos')
+                    ->leftJoin('photo_metadata', 'photo_metadata.photo_id', '=', 'photos.id')
+                    ->whereIn('photos.series_id', $seriesIds->all())
+                    ->selectRaw('photos.series_id as series_id, MAX(photo_metadata.taken_at) as taken_at')
+                    ->groupBy('photos.series_id')
+                    ->pluck('taken_at', 'series_id')
+                    ->toArray();
+            }
+
             $previewMap = $this->seriesPreviewService->buildSeriesPreviewMap($collection);
-            $paginator->setCollection($collection->map(function (Series $series) use ($previewMap): array {
+            $paginator->setCollection($collection->map(function (Series $series) use ($previewMap, $takenAtBySeriesId): array {
                 $data = $series->toArray();
                 $data['preview_photos'] = $previewMap[(int) $series->id] ?? [];
+                $data['taken_at'] = $takenAtBySeriesId[(int) $series->id] ?? null;
 
                 return $data;
             }));

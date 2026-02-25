@@ -7,6 +7,7 @@ use App\Services\Series\SeriesHttpCacheService;
 use App\Services\Series\SeriesPhotoUrlService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 
 class ShowSeriesAction
 {
@@ -71,8 +72,14 @@ class ShowSeriesAction
 
         $series->loadCount('photos')->load('tags');
 
+        $data = $series->toArray();
+        $data['taken_at'] = DB::table('photos')
+            ->leftJoin('photo_metadata', 'photo_metadata.photo_id', '=', 'photos.id')
+            ->where('photos.series_id', (int) $series->id)
+            ->max('photo_metadata.taken_at');
+
         $payload = [
-            'data' => $series->toArray(),
+            'data' => $data,
         ];
 
         if (! $includePhotos) {

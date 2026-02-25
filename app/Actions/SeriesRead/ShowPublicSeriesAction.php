@@ -7,6 +7,7 @@ use App\Services\Series\SeriesHttpCacheService;
 use App\Services\Series\SeriesPhotoUrlService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 
 class ShowPublicSeriesAction
 {
@@ -51,6 +52,10 @@ class ShowPublicSeriesAction
         $series->loadCount('photos')->load(['tags', 'user:id,name']);
         $data = $series->toArray();
         $data['owner_name'] = (string) ($series->user?->name ?? '');
+        $data['taken_at'] = DB::table('photos')
+            ->leftJoin('photo_metadata', 'photo_metadata.photo_id', '=', 'photos.id')
+            ->where('photos.series_id', (int) $series->id)
+            ->max('photo_metadata.taken_at');
 
         $payload = [
             'data' => $data,
