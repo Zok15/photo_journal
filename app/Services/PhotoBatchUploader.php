@@ -92,8 +92,6 @@ class PhotoBatchUploader
                 return;
             }
 
-            $metadata['optimized_mime'] = 'image/jpeg';
-
             $size = $file->getSize();
             if ($size !== false && is_numeric($size)) {
                 $metadata['source_file_size'] = max(0, (int) $size);
