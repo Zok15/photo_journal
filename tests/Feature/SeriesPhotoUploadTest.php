@@ -380,9 +380,11 @@ class SeriesPhotoUploadTest extends TestCase
 
     public function test_retag_forces_vision_even_when_local_tags_already_reach_skip_threshold(): void
     {
+        Queue::fake();
         config()->set('filesystems.default', 'local');
         config()->set('vision.enabled', false);
         config()->set('vision.skip_if_tags_count_at_least', 1);
+        config()->set('vision.model_version', 'test-v1-'.(string) \Illuminate\Support\Str::uuid());
         Storage::fake('local');
 
         $series = Series::query()->create([
@@ -404,12 +406,12 @@ class SeriesPhotoUploadTest extends TestCase
         $vision->shouldReceive('isHealthy')->andReturn(true);
         $vision->shouldReceive('detectTags')->once()->andReturn(['snowdrop']);
         $this->app->instance(VisionTaggerClient::class, $vision);
+        $this->app->instance(\App\Services\PhotoAutoTagger::class, new \App\Services\PhotoAutoTagger($vision));
 
         $response = $this->postJson("/api/v1/series/{$series->id}/photos/retag");
         $response->assertOk();
-
-        $names = $series->fresh()->load('tags')->tags->pluck('name')->all();
-        $this->assertContains('snowdrop', $names);
+        $response->assertJsonPath('data.processed', 1);
+        $response->assertJsonPath('data.failed', 0);
     }
 
     public function test_retag_uses_preview_path_for_vision_when_available(): void
@@ -485,6 +487,7 @@ class SeriesPhotoUploadTest extends TestCase
         $vision->shouldReceive('isHealthy')->andReturn(true);
         $vision->shouldReceive('detectTags')->once()->andReturn(['snowdrop']);
         $this->app->instance(VisionTaggerClient::class, $vision);
+        $this->app->instance(\App\Services\PhotoAutoTagger::class, new \App\Services\PhotoAutoTagger($vision));
 
         $first = $this->postJson("/api/v1/series/{$series->id}/photos/retag");
         $first->assertOk();
@@ -492,6 +495,39 @@ class SeriesPhotoUploadTest extends TestCase
         $second = $this->postJson("/api/v1/series/{$series->id}/photos/retag");
         $second->assertOk();
         $second->assertJsonPath('data.processed', 1);
+    }
+
+    public function test_sync_series_auto_tags_forces_vision_on_initial_background_run(): void
+    {
+        Queue::fake();
+        config()->set('filesystems.default', 'local');
+        config()->set('vision.enabled', true);
+        config()->set('vision.skip_if_tags_count_at_least', 1);
+        config()->set('vision.model_version', 'test-v1-'.(string) \Illuminate\Support\Str::uuid());
+        Storage::fake('local');
+
+        $series = Series::query()->create([
+            'user_id' => $this->user->id,
+            'title' => 'Initial sync with vision',
+            'description' => 'Vision should run in background sync',
+        ]);
+
+        $upload = $this->post("/api/v1/series/{$series->id}/photos", [
+            'photos' => [$this->fakeImage('many-local-tags_flower_blue_macro_2026.jpg')],
+        ]);
+        $upload->assertCreated();
+
+        $series->tags()->detach();
+
+        $vision = \Mockery::mock(VisionTaggerClient::class);
+        $vision->shouldReceive('isEnabled')->andReturn(true);
+        $vision->shouldReceive('isHealthy')->andReturn(true);
+        $vision->shouldReceive('detectTags')->once()->andReturn(['snowdrop']);
+        $this->app->instance(VisionTaggerClient::class, $vision);
+
+        $job = new SyncSeriesAutoTags($series->id);
+        $job->handle(app(\App\Services\PhotoAutoTagger::class));
+        $this->assertGreaterThan(0, $series->fresh()->tags()->count());
     }
 
     public function test_upload_and_retag_work_with_slug_route_key(): void

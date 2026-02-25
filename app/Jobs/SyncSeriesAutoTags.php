@@ -41,7 +41,8 @@ class SyncSeriesAutoTags implements ShouldQueue
                     try {
                         $allTagNames = [
                             ...$allTagNames,
-                            ...$photoAutoTagger->detectTagsForPhoto($photo, $disk, $series),
+                            // Background auto-tag sync should include vision tags on first pass.
+                            ...$photoAutoTagger->detectTagsForPhoto($photo, $disk, $series, forceVision: true),
                         ];
                         $processed++;
                     } catch (\Throwable $e) {
