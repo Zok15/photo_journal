@@ -15,3 +15,7 @@ Schedule::command('outbox:poll')
 Schedule::command('tags:cleanup-garbage-auto')
     ->everyThirtyMinutes()
     ->withoutOverlapping();
+
+Schedule::command('seo:build-showcase')
+    ->dailyAt('03:15')
+    ->withoutOverlapping();
