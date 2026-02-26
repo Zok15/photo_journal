@@ -158,10 +158,10 @@ class PhotoBatchUploader
         }
 
         $maxBytes = max(256000, (int) config('photo_processing.upload_max_bytes', 2 * 1024 * 1024));
-        $maxDimension = max(640, (int) config('photo_processing.upload_max_dimension', 3840));
+        $maxDimension = max(640, (int) config('photo_processing.upload_max_dimension', 6000));
         $minDimension = max(320, (int) config('photo_processing.upload_min_dimension', 1200));
-        $qualityStart = max(40, min(100, (int) config('photo_processing.upload_jpeg_quality_start', 92)));
-        $qualityMin = max(25, min(95, (int) config('photo_processing.upload_jpeg_quality_min', 55)));
+        $qualityStart = max(40, min(100, (int) config('photo_processing.upload_jpeg_quality_start', 96)));
+        $qualityMin = max(25, min(95, (int) config('photo_processing.upload_jpeg_quality_min', 70)));
 
         try {
             $sourceWidth = imagesx($image);
