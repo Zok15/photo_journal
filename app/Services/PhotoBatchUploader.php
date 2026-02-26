@@ -87,18 +87,44 @@ class PhotoBatchUploader
      */
     private function storePreparedMetadata(Photo $photo, UploadedFile $file, ?array $metadata): void
     {
+        if ($metadata === null) {
+            return;
+        }
+
+        $payload = $metadata;
+
+        $size = $file->getSize();
+        if ($size !== false && is_numeric($size)) {
+            $payload['source_file_size'] = max(0, (int) $size);
+        }
+
         try {
-            if ($metadata === null) {
-                return;
-            }
-
-            $size = $file->getSize();
-            if ($size !== false && is_numeric($size)) {
-                $metadata['source_file_size'] = max(0, (int) $size);
-            }
-
-            $photo->metadata()->updateOrCreate([], $metadata);
+            $photo->metadata()->updateOrCreate([], $payload);
         } catch (Throwable $e) {
+            if (array_key_exists('raw_exif_json', $payload)) {
+                $fallbackPayload = $payload;
+                unset($fallbackPayload['raw_exif_json']);
+
+                try {
+                    $photo->metadata()->updateOrCreate([], $fallbackPayload);
+                    Log::warning('EXIF raw payload failed JSON encoding; metadata stored without raw_exif_json.', [
+                        'photo_id' => (int) $photo->id,
+                        'original_name' => $file->getClientOriginalName(),
+                        'error' => $e->getMessage(),
+                    ]);
+
+                    return;
+                } catch (Throwable $fallbackError) {
+                    Log::warning('Failed to store EXIF metadata even after dropping raw_exif_json.', [
+                        'photo_id' => (int) $photo->id,
+                        'original_name' => $file->getClientOriginalName(),
+                        'error' => $fallbackError->getMessage(),
+                    ]);
+
+                    return;
+                }
+            }
+
             Log::warning('Failed to extract EXIF metadata for uploaded photo.', [
                 'photo_id' => (int) $photo->id,
                 'original_name' => $file->getClientOriginalName(),
@@ -132,10 +158,10 @@ class PhotoBatchUploader
         }
 
         $maxBytes = max(256000, (int) config('photo_processing.upload_max_bytes', 2 * 1024 * 1024));
-        $maxDimension = max(640, (int) config('photo_processing.upload_max_dimension', 2560));
-        $minDimension = max(320, (int) config('photo_processing.upload_min_dimension', 900));
-        $qualityStart = max(40, min(100, (int) config('photo_processing.upload_jpeg_quality_start', 88)));
-        $qualityMin = max(25, min(95, (int) config('photo_processing.upload_jpeg_quality_min', 45)));
+        $maxDimension = max(640, (int) config('photo_processing.upload_max_dimension', 3840));
+        $minDimension = max(320, (int) config('photo_processing.upload_min_dimension', 1200));
+        $qualityStart = max(40, min(100, (int) config('photo_processing.upload_jpeg_quality_start', 92)));
+        $qualityMin = max(25, min(95, (int) config('photo_processing.upload_jpeg_quality_min', 55)));
 
         try {
             $sourceWidth = imagesx($image);

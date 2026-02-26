@@ -126,6 +126,46 @@ class SeriesPhotoUploadTest extends TestCase
         ]);
     }
 
+    public function test_upload_persists_core_exif_metadata_even_when_raw_payload_contains_invalid_utf8(): void
+    {
+        Queue::fake();
+        config()->set('filesystems.default', 'local');
+        Storage::fake('local');
+
+        $series = Series::query()->create([
+            'user_id' => $this->user->id,
+            'title' => 'Exif fallback',
+            'description' => 'Metadata fallback check',
+        ]);
+
+        $extractor = \Mockery::mock(ExifMetadataExtractor::class);
+        $extractor->shouldReceive('extractFromUploadedFile')
+            ->once()
+            ->andReturn([
+                'taken_at' => '2026-02-25 12:30:00',
+                'camera_make' => 'Canon',
+                'camera_model' => 'EOS R6',
+                'iso' => 400,
+                'raw_exif_json' => ['EXIF' => ['UserComment' => "\xB1\x31"]],
+            ]);
+        $this->app->instance(ExifMetadataExtractor::class, $extractor);
+
+        $response = $this->post("/api/v1/series/{$series->id}/photos", [
+            'photos' => [$this->fakeImage('meta-invalid-utf8.jpg')],
+        ]);
+
+        $response->assertCreated();
+        $photoId = (int) $response->json('photos_created.0.id');
+
+        $this->assertDatabaseHas('photo_metadata', [
+            'photo_id' => $photoId,
+            'camera_make' => 'Canon',
+            'camera_model' => 'EOS R6',
+            'iso' => 400,
+            'taken_at' => '2026-02-25 12:30:00',
+        ]);
+    }
+
     public function test_upload_assigns_exif_camera_and_word_based_tags_from_metadata(): void
     {
         config()->set('filesystems.default', 'local');

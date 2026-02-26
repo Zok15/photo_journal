@@ -3,6 +3,7 @@
 namespace App\Console\Commands;
 
 use App\Models\Photo;
+use App\Models\Series;
 use App\Services\ExifMetadataExtractor;
 use Illuminate\Console\Command;
 
@@ -11,6 +12,8 @@ class BackfillPhotoMetadata extends Command
     protected $signature = 'photos:metadata:backfill
         {--from-id=0 : Process photos with id greater than this value}
         {--limit=500 : Maximum number of photos to process}
+        {--series-id=0 : Process only photos from a specific series id}
+        {--series-slug= : Process only photos from a specific series slug}
         {--disk= : Storage disk with original photos (default: filesystems.default)}
         {--dry-run : Analyze metadata without writing to the database}';
 
@@ -25,12 +28,30 @@ class BackfillPhotoMetadata extends Command
     {
         $fromId = max(0, (int) $this->option('from-id'));
         $limit = max(1, (int) $this->option('limit'));
+        $seriesId = max(0, (int) $this->option('series-id'));
+        $seriesSlug = trim((string) $this->option('series-slug'));
         $disk = (string) ($this->option('disk') ?: config('filesystems.default'));
         $dryRun = (bool) $this->option('dry-run');
 
-        $photos = Photo::query()
+        if ($seriesSlug !== '') {
+            $resolvedSeries = Series::query()->where('slug', $seriesSlug)->first();
+            if ($resolvedSeries === null) {
+                $this->error("Series with slug '{$seriesSlug}' was not found.");
+                return self::FAILURE;
+            }
+
+            $seriesId = (int) $resolvedSeries->id;
+        }
+
+        $query = Photo::query()
             ->where('id', '>', $fromId)
-            ->orderBy('id')
+            ->orderBy('id');
+
+        if ($seriesId > 0) {
+            $query->where('series_id', $seriesId);
+        }
+
+        $photos = $query
             ->limit($limit)
             ->get();
 
@@ -69,10 +90,11 @@ class BackfillPhotoMetadata extends Command
         }
 
         $this->table(
-            ['from_id', 'limit', 'disk', 'processed', 'updated', 'skipped', 'failed', 'dry_run'],
+            ['from_id', 'limit', 'series_id', 'disk', 'processed', 'updated', 'skipped', 'failed', 'dry_run'],
             [[
                 'from_id' => $fromId,
                 'limit' => $limit,
+                'series_id' => $seriesId > 0 ? $seriesId : '-',
                 'disk' => $disk,
                 'processed' => $processed,
                 'updated' => $updated,

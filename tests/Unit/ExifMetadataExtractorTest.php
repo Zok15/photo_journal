@@ -69,4 +69,23 @@ class ExifMetadataExtractorTest extends TestCase
 
         $this->assertNull($metadata);
     }
+
+    public function test_normalize_from_array_sanitizes_invalid_utf8_in_raw_exif_json(): void
+    {
+        $extractor = new ExifMetadataExtractor();
+        $invalidUtf8 = "\xB1\x31";
+
+        $metadata = $extractor->normalizeFromArray([
+            'EXIF' => [
+                'DateTimeOriginal' => '2026:02:25 10:12:13',
+                'UserComment' => $invalidUtf8,
+            ],
+        ]);
+
+        $this->assertNotNull($metadata);
+        $this->assertSame('2026-02-25 10:12:13', $metadata['taken_at']);
+        $this->assertIsArray($metadata['raw_exif_json']);
+        $this->assertIsString($metadata['raw_exif_json']['EXIF']['UserComment'] ?? null);
+        $this->assertStringStartsWith('[binary:', (string) ($metadata['raw_exif_json']['EXIF']['UserComment'] ?? ''));
+    }
 }

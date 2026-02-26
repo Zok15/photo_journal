@@ -531,16 +531,40 @@ class ExifMetadataExtractor
                 return $result;
             }
 
-            if (is_bool($value) || is_int($value) || is_float($value) || is_string($value) || $value === null) {
+            if (is_string($value)) {
+                return $this->sanitizeUtf8String($value);
+            }
+
+            if (is_bool($value) || is_int($value) || is_float($value) || $value === null) {
                 return $value;
             }
 
-            return (string) $value;
+            return $this->sanitizeUtf8String((string) $value);
         };
 
         /** @var array<string, mixed> $sanitized */
         $sanitized = $sanitize($rawExif);
 
         return $sanitized;
+    }
+
+    private function sanitizeUtf8String(string $value): string
+    {
+        if ($value === '') {
+            return '';
+        }
+
+        if (preg_match('//u', $value) === 1) {
+            return $value;
+        }
+
+        if (function_exists('iconv')) {
+            $converted = @iconv('UTF-8', 'UTF-8//IGNORE', $value);
+            if (is_string($converted) && $converted !== '' && preg_match('//u', $converted) === 1) {
+                return $converted;
+            }
+        }
+
+        return '[binary:'.base64_encode($value).']';
     }
 }
