@@ -12,6 +12,7 @@ class BuildSeoShowcase extends Command
     protected $signature = 'seo:build-showcase
         {--output= : Output directory for static pages (defaults to ../photo_journal_frontend/dist)}
         {--origin= : Public site origin, e.g. https://photolog.org}
+        {--with-pages : Generate static showcase HTML pages (/public/series and /series/{slug})}
         {--dry-run : Show actions without writing files}';
 
     protected $description = 'Build static showcase pages and sitemap.xml for public series.';
@@ -21,6 +22,7 @@ class BuildSeoShowcase extends Command
         $outputDir = $this->resolveOutputDirectory();
         $siteOrigin = $this->resolveSiteOrigin();
         $dryRun = (bool) $this->option('dry-run');
+        $withPages = (bool) $this->option('with-pages');
         $generatedAt = Carbon::now()->toIso8601String();
 
         $seriesList = Series::query()
@@ -43,6 +45,7 @@ class BuildSeoShowcase extends Command
         $this->line(sprintf('Output directory: %s', $outputDir));
         $this->line(sprintf('Site origin: %s', $siteOrigin));
         $this->line(sprintf('Mode: %s', $dryRun ? 'dry-run' : 'write'));
+        $this->line(sprintf('Generate pages: %s', $withPages ? 'yes' : 'no (sitemap only)'));
 
         $urls = [];
         $urls[] = [
@@ -64,28 +67,32 @@ class BuildSeoShowcase extends Command
             'priority' => '0.4',
         ];
 
-        $listPagePath = $outputDir.'/public/series/index.html';
-        $listHtml = view('showcase.series-list', [
-            'siteOrigin' => $siteOrigin,
-            'generatedAt' => $generatedAt,
-            'seriesList' => $seriesList,
-        ])->render();
-        $this->writeFile($listPagePath, $listHtml, $dryRun);
-
         $seriesRoot = $outputDir.'/series';
-        $this->deleteDirectory($seriesRoot, $dryRun);
+        if ($withPages) {
+            $listPagePath = $outputDir.'/public/series/index.html';
+            $listHtml = view('showcase.series-list', [
+                'siteOrigin' => $siteOrigin,
+                'generatedAt' => $generatedAt,
+                'seriesList' => $seriesList,
+            ])->render();
+            $this->writeFile($listPagePath, $listHtml, $dryRun);
+
+            $this->deleteDirectory($seriesRoot, $dryRun);
+        }
 
         foreach ($seriesList as $series) {
             $slug = $this->seriesSlug($series);
             $path = '/series/'.$slug;
-            $seriesHtml = view('showcase.series-detail', [
-                'siteOrigin' => $siteOrigin,
-                'generatedAt' => $generatedAt,
-                'series' => $series,
-                'slug' => $slug,
-            ])->render();
+            if ($withPages) {
+                $seriesHtml = view('showcase.series-detail', [
+                    'siteOrigin' => $siteOrigin,
+                    'generatedAt' => $generatedAt,
+                    'series' => $series,
+                    'slug' => $slug,
+                ])->render();
 
-            $this->writeFile($seriesRoot.'/'.$slug.'/index.html', $seriesHtml, $dryRun);
+                $this->writeFile($seriesRoot.'/'.$slug.'/index.html', $seriesHtml, $dryRun);
+            }
 
             $urls[] = [
                 'path' => $path,
@@ -239,4 +246,3 @@ class BuildSeoShowcase extends Command
         );
     }
 }
-
